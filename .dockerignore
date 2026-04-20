@@ -1,0 +1,46 @@
+# Keep the Docker build context small and deterministic. Anything
+# listed here is excluded from what `docker build` ships to the daemon.
+#
+# NOTE: do NOT add `README.md` or `LICENSE` here — metadata-action /
+# other labeling tools sometimes read them during the build.
+
+# Local installs + build output (rebuilt inside the image).
+node_modules
+dist
+*.tsbuildinfo
+
+# VCS + CI metadata — not needed to compile TS.
+.git
+.gitignore
+.gitattributes
+.github
+
+# Tests + test helpers — `tsconfig.json` already excludes these but
+# dropping them from the context keeps cache keys stable and shrinks
+# upload time on cold runs.
+tests
+**/tests/**
+**/test-utils/**
+**/*.test.ts
+**/*.spec.ts
+
+# Editor / OS noise.
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Local env + secrets.
+.env
+.env.local
+.env.*
+
+# Docs that aren't useful inside the image.
+docs
+examples
+web
+CHANGELOG.md
+
+# Docker-related files we don't want copied in by a broad `COPY`.
+.dockerignore
+deploy/local-env

@@ -38,6 +38,30 @@ This repository does not include:
 
 This repository is expected to consume `resolvetrace-contract` as the interface authority. Public API shape and SDK-facing schemas should be defined there, not re-declared here.
 
+## Docker
+
+Published multi-arch images (`linux/amd64` + `linux/arm64`) are pushed to
+GitHub Container Registry on every push to `main` and on every `v*.*.*`
+tag:
+
+```bash
+docker pull ghcr.io/peaktek/resolvetrace-core:latest
+```
+
+Tag conventions:
+
+| Tag | Meaning |
+|---|---|
+| `:latest` | Tip of `main`. Moves on every merge. |
+| `:sha-<short>` | Immutable — one per build. Use this when you need reproducibility. |
+| `:vX.Y.Z`, `:X.Y`, `:X` | Published on `v*.*.*` tag pushes. |
+
+To run the full local stack (ingest server + Postgres + Redis + MinIO)
+using the published image instead of a local build, see the two patterns
+in [`deploy/README.md`](./deploy/README.md). The minimum required env
+vars (`OSS_API_KEY`, `DATABASE_URL`, `REDIS_URL`, `S3_*`, `AWS_REGION`)
+are documented in the [ingest-api README](./server/ingest-api/README.md).
+
 ## License
 
 Business Source License 1.1 with an Apache 2.0 change license. See [LICENSE](./LICENSE) for the binding terms.

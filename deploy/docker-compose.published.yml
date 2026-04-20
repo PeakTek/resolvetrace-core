@@ -1,0 +1,23 @@
+# Override file that swaps the locally-built image for the published
+# GHCR image. Use this when you just want to run ResolveTrace without
+# waiting on a local TypeScript build.
+#
+# Usage (from the `deploy/` directory):
+#     docker compose \
+#       -f docker-compose.yml \
+#       -f docker-compose.published.yml \
+#       up
+#
+# Pin to a specific tag by overriding the `RESOLVETRACE_IMAGE` env var:
+#     RESOLVETRACE_IMAGE=ghcr.io/peaktek/resolvetrace-core:v0.1.0 \
+#     docker compose -f docker-compose.yml -f docker-compose.published.yml up
+#
+# The base `docker-compose.yml` still drives environment, ports, volumes,
+# and dependencies — this file only changes where the image comes from
+# and forces a pull rather than a local build.
+version: "3.9"
+
+services:
+  resolvetrace:
+    image: ${RESOLVETRACE_IMAGE:-ghcr.io/peaktek/resolvetrace-core:latest}
+    pull_policy: always

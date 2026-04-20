@@ -1,0 +1,68 @@
+# Typecheck + test gate for resolvetrace-core.
+#
+# Runs on every PR and on every push to main. The image publish pipeline
+# (`publish-image.yml`) should never be asked to build a tree that doesn't
+# pass these checks, so this workflow is the first-pass quality gate.
+name: typecheck
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typecheck-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-test:
+    name: typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect lockfile
+        id: lockfile
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node 20 (with cache)
+        if: steps.lockfile.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Node 20 (no cache)
+        if: steps.lockfile.outputs.present == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build (verifies dist/ emits cleanly)
+        run: npm run build
