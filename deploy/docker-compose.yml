@@ -3,32 +3,38 @@
 # Goal: `docker compose up` on a clean machine yields a working ResolveTrace
 # instance reachable at http://resolvetrace.local. Single-tenant mode is the
 # default; no multi-tenant routing or external identity provider required.
-#
-# NOTE: The `resolvetrace` service entrypoint (node dist/server/main.js) is
-# placeholder-wired here. The HTTP server itself (main.ts + routes) lands in a
-# later milestone; this compose file is the target topology.
 
 version: "3.9"
 
 services:
-  # ResolveTrace server (ingest + processing + portal API).
+  # ResolveTrace ingest server.
   # Built from this repo root; the TS build output is copied into the image.
   resolvetrace:
     image: resolvetrace-core:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    # Command is placeholder until server/main.ts exists.
-    command: ["node", "dist/server/main.js"]
+    command: ["node", "dist/server/ingest-api/main.js"]
     depends_on:
-      - postgres
-      - redis
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
     environment:
+      # --- Listener ---
+      PORT: "4317"
+      HOST: "0.0.0.0"
+      LOG_LEVEL: "info"
+      # CORS_ORIGINS: comma-separated list, default `*`. Set explicitly when
+      # serving a known portal origin in production.
+      CORS_ORIGINS: ""
+
       # --- Tenancy ---
-      # Default single-tenant mode. One tenant, fixed resources, API-key auth.
       RESOLVETRACE_TENANT_MODE: "single"
       RESOLVETRACE_TENANT_ID: "oss-single-tenant"
+      RESOLVETRACE_ENV: "dev"
       INGEST_HOST: "resolvetrace.local"
 
       # --- Data plane ---
@@ -43,31 +49,37 @@ services:
       AWS_ACCESS_KEY_ID: "minioadmin"
       AWS_SECRET_ACCESS_KEY: "minioadmin"
 
-      # --- Auth ---
-      # Local auth is the OSS default. Set AUTH_MODE=oidc + OIDC_* vars to
-      # switch to a generic OIDC provider (Keycloak, Auth0, etc.).
+      # --- Auth (portal users only — separate from the ingest API key below) ---
       AUTH_MODE: "local"
       OSS_ADMIN_USERNAME: "admin"
       # OSS_ADMIN_PASSWORD_HASH is a bcrypt hash; generate with `bcrypt` CLI.
       OSS_ADMIN_PASSWORD_HASH: "$$2b$$10$$REPLACE_ME_WITH_REAL_BCRYPT_HASH"
 
       # --- Secrets ---
-      # `env` is the OSS default; `parameter-store` is available for AWS
-      # self-hosted deployments that already use SSM.
       SECRETS_MODE: "env"
 
-      # --- API key for ingest ---
-      # OSS runs with a single opaque API key (Bearer token). Rotate by
-      # redeploying with a new value.
+      # --- Ingest API key ---
+      # OSS runs with a single opaque API key (Bearer token) for the ingest
+      # surface. Rotate by redeploying with a new value.
       OSS_API_KEY: "replace-me-with-long-random-string"
     ports:
-      # 4317: OTLP-style ingest port (HTTP; not gRPC in the OSS build).
+      # 4317: HTTP ingest port (events / replay / session).
       - "4317:4317"
-      # 3000: Portal web + portal API (served from the same process for OSS).
-      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4317/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
-  # Application + control-plane data store. Single DB in OSS; no `tenants`
-  # table, no per-tenant schema. Schema migrations ship in the server image.
+  # Application data store. Single DB in OSS; no `tenants` table, no
+  # per-tenant schema. Schema migrations ship in the server image (later wave).
   postgres:
     image: postgres:16-alpine
     environment:
@@ -79,7 +91,8 @@ services:
     ports:
       - "5432:5432"
 
-  # Dedup cache, rate-limit buckets, denylist.
+  # Dedup cache and rate-limit buckets (when REDIS_URL is set; otherwise the
+  # server falls back to in-memory).
   redis:
     image: redis:7-alpine
     ports:
