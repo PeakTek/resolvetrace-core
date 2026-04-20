@@ -1,0 +1,18 @@
+# ResolveTrace OSS — Docker Compose quickstart
+#
+# This file is a placeholder. The Milestone 0 deliverable (Workstream A / A-D26, A-D27)
+# will populate this with:
+#   - resolvetrace-core server (ingest + processing + portal)
+#   - Postgres (shared schema, single-tenant mode)
+#   - Redis (dedup + cache)
+#   - MinIO (S3-compatible replay storage)
+#   - Optional: OIDC provider for local auth testing
+#
+# The quickstart goal: `docker compose up` on a clean machine yields a working
+# ResolveTrace instance reachable at https://resolvetrace.local.
+#
+# Target: populated by end of Milestone 0.
+
+version: "3.9"
+
+services: {}
