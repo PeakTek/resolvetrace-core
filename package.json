@@ -1,0 +1,32 @@
+{
+  "name": "@peaktek/resolvetrace-core",
+  "version": "0.1.0",
+  "description": "ResolveTrace self-hosted server (OSS, BSL 1.1). Single-tenant core server with ingest, replay, redaction, and portal surfaces.",
+  "license": "BUSL-1.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx watch server/main.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.645.0",
+    "@aws-sdk/client-ssm": "^3.645.0",
+    "@aws-sdk/s3-request-presigner": "^3.645.0",
+    "bcrypt": "^5.1.1",
+    "openid-client": "^5.6.5"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

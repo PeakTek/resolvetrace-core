@@ -1,18 +1,109 @@
-# ResolveTrace OSS — Docker Compose quickstart
+# ResolveTrace OSS - Docker Compose quickstart
 #
-# This file is a placeholder. The Milestone 0 deliverable (Workstream A / A-D26, A-D27)
-# will populate this with:
-#   - resolvetrace-core server (ingest + processing + portal)
-#   - Postgres (shared schema, single-tenant mode)
-#   - Redis (dedup + cache)
-#   - MinIO (S3-compatible replay storage)
-#   - Optional: OIDC provider for local auth testing
+# Goal: `docker compose up` on a clean machine yields a working ResolveTrace
+# instance reachable at http://resolvetrace.local. Single-tenant mode is the
+# default; no multi-tenant routing or external identity provider required.
 #
-# The quickstart goal: `docker compose up` on a clean machine yields a working
-# ResolveTrace instance reachable at https://resolvetrace.local.
-#
-# Target: populated by end of Milestone 0.
+# NOTE: The `resolvetrace` service entrypoint (node dist/server/main.js) is
+# placeholder-wired here. The HTTP server itself (main.ts + routes) lands in a
+# later milestone; this compose file is the target topology.
 
 version: "3.9"
 
-services: {}
+services:
+  # ResolveTrace server (ingest + processing + portal API).
+  # Built from this repo root; the TS build output is copied into the image.
+  resolvetrace:
+    image: resolvetrace-core:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # Command is placeholder until server/main.ts exists.
+    command: ["node", "dist/server/main.js"]
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    environment:
+      # --- Tenancy ---
+      # Default single-tenant mode. One tenant, fixed resources, API-key auth.
+      RESOLVETRACE_TENANT_MODE: "single"
+      RESOLVETRACE_TENANT_ID: "oss-single-tenant"
+      INGEST_HOST: "resolvetrace.local"
+
+      # --- Data plane ---
+      DATABASE_URL: "postgres://resolvetrace:resolvetrace@postgres:5432/resolvetrace"
+      REDIS_URL: "redis://redis:6379/0"
+
+      # --- Object storage (MinIO, S3-compatible) ---
+      S3_ENDPOINT: "http://minio:9000"
+      S3_BUCKET: "resolvetrace-replay"
+      S3_PREFIX: ""
+      AWS_REGION: "us-east-1"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+
+      # --- Auth ---
+      # Local auth is the OSS default. Set AUTH_MODE=oidc + OIDC_* vars to
+      # switch to a generic OIDC provider (Keycloak, Auth0, etc.).
+      AUTH_MODE: "local"
+      OSS_ADMIN_USERNAME: "admin"
+      # OSS_ADMIN_PASSWORD_HASH is a bcrypt hash; generate with `bcrypt` CLI.
+      OSS_ADMIN_PASSWORD_HASH: "$$2b$$10$$REPLACE_ME_WITH_REAL_BCRYPT_HASH"
+
+      # --- Secrets ---
+      # `env` is the OSS default; `parameter-store` is available for AWS
+      # self-hosted deployments that already use SSM.
+      SECRETS_MODE: "env"
+
+      # --- API key for ingest ---
+      # OSS runs with a single opaque API key (Bearer token). Rotate by
+      # redeploying with a new value.
+      OSS_API_KEY: "replace-me-with-long-random-string"
+    ports:
+      # 4317: OTLP-style ingest port (HTTP; not gRPC in the OSS build).
+      - "4317:4317"
+      # 3000: Portal web + portal API (served from the same process for OSS).
+      - "3000:3000"
+
+  # Application + control-plane data store. Single DB in OSS; no `tenants`
+  # table, no per-tenant schema. Schema migrations ship in the server image.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "resolvetrace"
+      POSTGRES_PASSWORD: "resolvetrace"
+      POSTGRES_DB: "resolvetrace"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # Dedup cache, rate-limit buckets, denylist.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  # S3-compatible object storage for replay chunks. MinIO is the standard
+  # OSS substitute for S3; ResolveTrace's storage adapter speaks the same
+  # S3 API against either.
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "minioadmin"
+      MINIO_ROOT_PASSWORD: "minioadmin"
+    ports:
+      # 9000: S3 API. 9001: MinIO admin console.
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

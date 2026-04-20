@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+Thumbs.db
+~$*
+.~lock.*#
+.vscode/
+.idea/
