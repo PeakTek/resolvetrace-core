@@ -45,6 +45,41 @@ export async function buildApp(
     trustProxy: true,
   });
 
+  // --- Error handler ------------------------------------------------------
+  // Registered BEFORE plugins and routes so that encapsulated scopes inherit
+  // this handler (Fastify captures the parent scope's error handler at plugin
+  // registration time; setting it later means the scopes keep the default).
+  fastify.setErrorHandler((error, request, reply) => {
+    // Validation first — ajv-driven.
+    if (error instanceof ValidationError) {
+      reply.code(400).send({
+        error: "invalid_request",
+        message: "Request body failed schema validation.",
+        details: { errors: error.errors },
+      });
+      return;
+    }
+    if (error instanceof UnauthorizedError) {
+      reply.code(401).send({
+        error: "unauthorized",
+        message: error.message,
+      });
+      return;
+    }
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+      reply.code(error.statusCode).send({
+        error: "bad_request",
+        message: error.message,
+      });
+      return;
+    }
+    request.log.error({ err: error }, "unexpected server error");
+    reply.code(500).send({
+      error: "internal_error",
+      message: "An internal server error occurred.",
+    });
+  });
+
   // --- Global security headers / CORS -------------------------------------
   await fastify.register(helmet, {
     // Permissive CSP at the ingest surface — no HTML served from here.
@@ -109,49 +144,6 @@ export async function buildApp(
   await fastify.register(sessionRoutes, {
     sessionSink: opts.sessionSink,
     rateLimitOptions: perClassLimits.session,
-  });
-
-  // --- Error handler ------------------------------------------------------
-  fastify.setErrorHandler((error, request, reply) => {
-    // TEMP Wave 7 round-6 diagnostic — prove setErrorHandler actually runs
-    // and see the error's constructor name + prototype-chain shape.
-    // eslint-disable-next-line no-console
-    console.error(
-      "[WAVE7-DIAG] setErrorHandler fired:",
-      "name=", error.name,
-      "ctor=", error.constructor?.name,
-      "isValidation=", error instanceof ValidationError,
-      "isUnauth=", error instanceof UnauthorizedError,
-      "msg=", error.message
-    );
-    // Validation first — ajv-driven.
-    if (error instanceof ValidationError) {
-      reply.code(400).send({
-        error: "invalid_request",
-        message: "Request body failed schema validation.",
-        details: { errors: error.errors },
-      });
-      return;
-    }
-    if (error instanceof UnauthorizedError) {
-      reply.code(401).send({
-        error: "unauthorized",
-        message: error.message,
-      });
-      return;
-    }
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      reply.code(error.statusCode).send({
-        error: "bad_request",
-        message: error.message,
-      });
-      return;
-    }
-    request.log.error({ err: error }, "unexpected server error");
-    reply.code(500).send({
-      error: "internal_error",
-      message: "An internal server error occurred.",
-    });
   });
 
   return fastify;
