@@ -40,7 +40,10 @@ export async function buildTestApp(overrides: TestAppOverrides = {}) {
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,
-    disableRequestLogging: true,
+    // TEMPORARY — Wave 7 round-5 diagnostic for the 9 remaining 4xx-as-500
+    // failures. Will revert in the follow-up fix commit.
+    disableRequestLogging: false,
+    logLevel: "error",
   });
 
   return {
