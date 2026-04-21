@@ -12,6 +12,7 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
+import fp from "fastify-plugin";
 import AjvImport, { AnySchema, ValidateFunction } from "ajv";
 import addFormatsImport from "ajv-formats";
 import {
@@ -52,7 +53,7 @@ declare module "fastify" {
   }
 }
 
-export const bodyValidatePlugin: FastifyPluginAsync = async (fastify) => {
+const bodyValidatePluginImpl: FastifyPluginAsync = async (fastify) => {
   const ajv = new Ajv({
     allErrors: true,
     strict: false,
@@ -91,3 +92,11 @@ export const bodyValidatePlugin: FastifyPluginAsync = async (fastify) => {
     };
   });
 };
+
+// Wrap with fastify-plugin so the decorator + onRequest hook propagate to
+// the parent scope; otherwise routes registered in app.ts don't see
+// `request.validateBody` and handlers get a TypeError at call time.
+export const bodyValidatePlugin = fp(bodyValidatePluginImpl, {
+  name: "body-validate",
+  fastify: "4.x",
+});

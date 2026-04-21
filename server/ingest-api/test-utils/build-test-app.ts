@@ -40,10 +40,7 @@ export async function buildTestApp(overrides: TestAppOverrides = {}) {
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,
-    // TEMPORARY — was `disableRequestLogging: true`; flipped to capture the
-    // server-side error behind the 23 route 500s. Will restore in a follow-up.
-    disableRequestLogging: false,
-    logLevel: "error",
+    disableRequestLogging: true,
   });
 
   return {

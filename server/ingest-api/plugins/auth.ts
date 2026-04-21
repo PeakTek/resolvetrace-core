@@ -10,6 +10,7 @@
  */
 
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
+import fp from "fastify-plugin";
 import {
   ApiKeyPrincipal,
   InvalidApiKeyError,
@@ -37,7 +38,7 @@ export interface AuthPluginOptions {
   skipPaths?: string[];
 }
 
-export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (
+const authPluginImpl: FastifyPluginAsync<AuthPluginOptions> = async (
   fastify,
   opts
 ) => {
@@ -73,3 +74,10 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (
     }
   });
 };
+
+// Wrap with fastify-plugin so the onRequest auth hook + `principal` decorator
+// apply to routes registered in the parent scope.
+export const authPlugin = fp(authPluginImpl, {
+  name: "auth",
+  fastify: "4.x",
+});

@@ -11,6 +11,7 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
+import fp from "fastify-plugin";
 import rateLimit, { RateLimitOptions } from "@fastify/rate-limit";
 import { RateLimitBudget, RateLimitClass } from "../types.js";
 
@@ -82,7 +83,7 @@ export function buildRateLimitPluginOptions(
 }
 
 /** Global registration — `global: false` so each route wires its own policy. */
-export const rateLimitPlugin: FastifyPluginAsync<RateLimitPluginOptionsExt> =
+const rateLimitPluginImpl: FastifyPluginAsync<RateLimitPluginOptionsExt> =
   async (fastify, opts) => {
     const merged = { ...DEFAULT_RATE_LIMITS, ...(opts.limits ?? {}) } as Record<
       RateLimitClass,
@@ -111,3 +112,10 @@ export const rateLimitPlugin: FastifyPluginAsync<RateLimitPluginOptionsExt> =
       timeWindow: "1 second",
     });
   };
+
+// Wrap with fastify-plugin so the per-route rate-limit config registered via
+// `config.rateLimit` on routes in the parent scope finds its plugin instance.
+export const rateLimitPlugin = fp(rateLimitPluginImpl, {
+  name: "rate-limit",
+  fastify: "4.x",
+});
