@@ -22,13 +22,12 @@ import {
   SessionEndRequestSchema,
 } from "../schemas/index.js";
 
-// ajv + ajv-formats ship CJS default exports; under NodeNext the bare default
-// import resolves to the module namespace. Unwrap `.default` when present.
-const Ajv =
-  (AjvImport as unknown as { default?: typeof AjvImport }).default ?? AjvImport;
+// Under NodeNext, `import X from "ajv"` resolves to the CJS module namespace
+// whose `.default` property is the actual class. Cast through the namespace
+// type so tsc sees the constructor / callable signature.
+const Ajv = AjvImport as unknown as typeof AjvImport.default;
 const addFormats =
-  (addFormatsImport as unknown as { default?: typeof addFormatsImport })
-    .default ?? addFormatsImport;
+  addFormatsImport as unknown as typeof addFormatsImport.default;
 
 export type ValidatorId =
   | "EventBatchRequest"

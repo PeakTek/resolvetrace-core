@@ -54,14 +54,6 @@ function pluginOptsFor(
         scope: "tenant",
       };
     },
-    // Per-route `RateLimitOptions` in v9 does not accept
-    // `addHeadersOnExceeding`; that key is set at plugin registration below.
-    addHeaders: {
-      "x-ratelimit-limit": true,
-      "x-ratelimit-remaining": true,
-      "x-ratelimit-reset": true,
-      "retry-after": true,
-    },
   };
 }
 
