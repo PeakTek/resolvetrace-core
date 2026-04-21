@@ -50,18 +50,17 @@ export async function buildApp(
   // this handler (Fastify captures the parent scope's error handler at plugin
   // registration time; setting it later means the scopes keep the default).
   fastify.setErrorHandler((error, request, reply) => {
-    // TEMP Wave 7 round 10 diagnostic — what does a rate-limit error look like?
     const anyErr = error as unknown as Record<string, unknown>;
-    // eslint-disable-next-line no-console
-    console.error(
-      `[WAVE7-EH] ${request.method} ${request.url}`,
-      "name=", error.name,
-      "code=", anyErr["code"],
-      "statusCode=", anyErr["statusCode"],
-      "isVal=", error instanceof ValidationError,
-      "isUnauth=", error instanceof UnauthorizedError,
-      "msg=", error.message
-    );
+
+    // Rate-limit errors come through as the plain object returned by
+    // plugins/rate-limit.ts's errorResponseBuilder — @fastify/rate-limit v9
+    // throws that value directly, so it has no Error prototype, no
+    // statusCode, and no name. Match on the discriminant field.
+    if (anyErr["error"] === "rate_limit_exceeded") {
+      reply.code(429).send(anyErr);
+      return;
+    }
+
     // Validation first — ajv-driven.
     if (error instanceof ValidationError) {
       reply.code(400).send({
@@ -121,15 +120,6 @@ export async function buildApp(
   fastify.addHook("onSend", async (_request, reply, payload) => {
     reply.header("Cache-Control", "no-store");
     return payload;
-  });
-
-  // TEMP Wave 7 round 9 diagnostic — log the final status of every response
-  // so we can correlate with keyGenerator / errorResponseBuilder traces.
-  fastify.addHook("onResponse", async (request, reply) => {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[WAVE7-RES] ${request.method} ${request.url} -> status=${reply.statusCode}`
-    );
   });
 
   // --- Validation ---------------------------------------------------------

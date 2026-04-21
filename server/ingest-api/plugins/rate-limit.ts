@@ -43,14 +43,9 @@ function pluginOptsFor(
     keyGenerator: (request) => {
       const principal = request.principal;
       const tenantId = principal?.config.tenantId ?? "anonymous";
-      const key = `${klass}:${tenantId}`;
-      // eslint-disable-next-line no-console
-      console.error(`[WAVE7-RL] keyGenerator ${request.method} ${request.url} -> ${key} (max=${budget.hard})`);
-      return key;
+      return `${klass}:${tenantId}`;
     },
     errorResponseBuilder: (_request, context) => {
-      // eslint-disable-next-line no-console
-      console.error(`[WAVE7-RL] errorResponseBuilder fired (ttl=${context.ttl}ms, max=${context.max})`);
       // Mirrors schemas/api-responses.json#/definitions/RateLimitErrorResponse.
       const retryAfter = Math.max(1, Math.ceil(context.ttl / 1000));
       return {
