@@ -94,7 +94,7 @@ docker buildx build \
 - Exposes `4317/tcp`. Override with the `PORT` env var.
 - Runs as the unprivileged `node` user (no root).
 - `HEALTHCHECK` pokes `http://127.0.0.1:${PORT}/health` every 30 s.
-- Default `CMD` is `node dist/server/ingest-api/main.js`.
+- Default `CMD` is `node dist/ingest-api/main.js`.
 
 See the [ingest-api README](../server/ingest-api/README.md) for the full
 list of environment variables the server consumes at startup.

@@ -97,4 +97,4 @@ LABEL org.opencontainers.image.title="resolvetrace-core" \
       org.opencontainers.image.revision="${IMAGE_REVISION}" \
       org.opencontainers.image.created="${IMAGE_CREATED}"
 
-CMD ["node", "dist/server/ingest-api/main.js"]
+CMD ["node", "dist/ingest-api/main.js"]

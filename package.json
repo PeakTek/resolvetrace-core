@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/server/ingest-api/main.js",
+    "start": "node dist/ingest-api/main.js",
     "dev": "tsx watch server/ingest-api/main.ts"
   },
   "dependencies": {

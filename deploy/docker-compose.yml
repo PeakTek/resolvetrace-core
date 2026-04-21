@@ -14,7 +14,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    command: ["node", "dist/server/ingest-api/main.js"]
+    command: ["node", "dist/ingest-api/main.js"]
     depends_on:
       postgres:
         condition: service_started
