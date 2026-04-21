@@ -50,6 +50,18 @@ export async function buildApp(
   // this handler (Fastify captures the parent scope's error handler at plugin
   // registration time; setting it later means the scopes keep the default).
   fastify.setErrorHandler((error, request, reply) => {
+    // TEMP Wave 7 round 10 diagnostic — what does a rate-limit error look like?
+    const anyErr = error as unknown as Record<string, unknown>;
+    // eslint-disable-next-line no-console
+    console.error(
+      `[WAVE7-EH] ${request.method} ${request.url}`,
+      "name=", error.name,
+      "code=", anyErr["code"],
+      "statusCode=", anyErr["statusCode"],
+      "isVal=", error instanceof ValidationError,
+      "isUnauth=", error instanceof UnauthorizedError,
+      "msg=", error.message
+    );
     // Validation first — ajv-driven.
     if (error instanceof ValidationError) {
       reply.code(400).send({
