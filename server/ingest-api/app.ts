@@ -113,6 +113,17 @@ export async function buildApp(
 
   // --- Error handler ------------------------------------------------------
   fastify.setErrorHandler((error, request, reply) => {
+    // TEMP Wave 7 round-6 diagnostic — prove setErrorHandler actually runs
+    // and see the error's constructor name + prototype-chain shape.
+    // eslint-disable-next-line no-console
+    console.error(
+      "[WAVE7-DIAG] setErrorHandler fired:",
+      "name=", error.name,
+      "ctor=", error.constructor?.name,
+      "isValidation=", error instanceof ValidationError,
+      "isUnauth=", error instanceof UnauthorizedError,
+      "msg=", error.message
+    );
     // Validation first — ajv-driven.
     if (error instanceof ValidationError) {
       reply.code(400).send({
