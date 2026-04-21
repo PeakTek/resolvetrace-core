@@ -111,6 +111,15 @@ export async function buildApp(
     return payload;
   });
 
+  // TEMP Wave 7 round 9 diagnostic — log the final status of every response
+  // so we can correlate with keyGenerator / errorResponseBuilder traces.
+  fastify.addHook("onResponse", async (request, reply) => {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[WAVE7-RES] ${request.method} ${request.url} -> status=${reply.statusCode}`
+    );
+  });
+
   // --- Validation ---------------------------------------------------------
   await fastify.register(bodyValidatePlugin);
 
