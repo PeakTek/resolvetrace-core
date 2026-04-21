@@ -72,20 +72,22 @@ export const bodyValidatePlugin: FastifyPluginAsync = async (fastify) => {
     SessionEndRequest: ajv.compile(SessionEndRequestSchema as AnySchema),
   };
 
-  // Decorate the request prototype with a method that captures the
-  // pre-compiled validators via closure. The arrow function here is bound
-  // to the request via Fastify's decorator semantics.
-  fastify.decorateRequest("validateBody", function validateBody(
-    this: import("fastify").FastifyRequest,
-    id: ValidatorId
-  ) {
-    const validate = validators[id];
-    if (!validate(this.body)) {
-      throw new ValidationError(
-        "Request body failed schema validation",
-        validate.errors
-      );
-    }
-    return this.body;
+  // Reserve the request prototype slot; attach a per-request closure in an
+  // onRequest hook. Fastify v4+ warns (and v5 throws) on function-valued
+  // decorateRequest because reference types get shared across requests —
+  // the hook pattern creates a fresh closure per request.
+  fastify.decorateRequest("validateBody", null);
+
+  fastify.addHook("onRequest", async (request) => {
+    request.validateBody = (id: ValidatorId) => {
+      const validate = validators[id];
+      if (!validate(request.body)) {
+        throw new ValidationError(
+          "Request body failed schema validation",
+          validate.errors
+        );
+      }
+      return request.body;
+    };
   });
 };
