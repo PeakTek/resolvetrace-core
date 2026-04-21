@@ -50,5 +50,5 @@ export function buildLoggerOptions(opts: LoggerRedactOptions = {}) {
         };
       },
     },
-  } as const;
+  };
 }

@@ -5,6 +5,7 @@
  * directly with mock adapters and use `fastify.inject()` — no network.
  */
 
+import type { Server } from "node:http";
 import Fastify, { FastifyInstance } from "fastify";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
@@ -33,8 +34,8 @@ export interface BuildAppOptions extends IngestApiDependencies {
 
 export async function buildApp(
   opts: BuildAppOptions
-): Promise<FastifyInstance> {
-  const fastify = Fastify({
+): Promise<FastifyInstance<Server>> {
+  const fastify = Fastify<Server>({
     logger: opts.disableRequestLogging
       ? false
       : buildLoggerOptions({ level: opts.logLevel }),

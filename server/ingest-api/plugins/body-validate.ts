@@ -12,8 +12,8 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
-import Ajv, { AnySchema, ValidateFunction } from "ajv";
-import addFormats from "ajv-formats";
+import AjvImport, { AnySchema, ValidateFunction } from "ajv";
+import addFormatsImport from "ajv-formats";
 import {
   EventBatchRequestSchema,
   ReplaySignedUrlRequestSchema,
@@ -21,6 +21,14 @@ import {
   SessionStartRequestSchema,
   SessionEndRequestSchema,
 } from "../schemas/index.js";
+
+// ajv + ajv-formats ship CJS default exports; under NodeNext the bare default
+// import resolves to the module namespace. Unwrap `.default` when present.
+const Ajv =
+  (AjvImport as unknown as { default?: typeof AjvImport }).default ?? AjvImport;
+const addFormats =
+  (addFormatsImport as unknown as { default?: typeof addFormatsImport })
+    .default ?? addFormatsImport;
 
 export type ValidatorId =
   | "EventBatchRequest"
