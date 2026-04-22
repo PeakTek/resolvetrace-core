@@ -117,5 +117,5 @@ const rateLimitPluginImpl: FastifyPluginAsync<RateLimitPluginOptionsExt> =
 // `config.rateLimit` on routes in the parent scope finds its plugin instance.
 export const rateLimitPlugin = fp(rateLimitPluginImpl, {
   name: "rate-limit",
-  fastify: "4.x",
+  fastify: "5.x",
 });

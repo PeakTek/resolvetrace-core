@@ -98,5 +98,5 @@ const bodyValidatePluginImpl: FastifyPluginAsync = async (fastify) => {
 // `request.validateBody` and handlers get a TypeError at call time.
 export const bodyValidatePlugin = fp(bodyValidatePluginImpl, {
   name: "body-validate",
-  fastify: "4.x",
+  fastify: "5.x",
 });

@@ -79,5 +79,5 @@ const authPluginImpl: FastifyPluginAsync<AuthPluginOptions> = async (
 // apply to routes registered in the parent scope.
 export const authPlugin = fp(authPluginImpl, {
   name: "auth",
-  fastify: "4.x",
+  fastify: "5.x",
 });
