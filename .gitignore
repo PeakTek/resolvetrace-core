@@ -1,5 +1,10 @@
 node_modules/
 dist/
+# Portal (web/) build artifacts
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
 *.log
 *.tsbuildinfo
 .env

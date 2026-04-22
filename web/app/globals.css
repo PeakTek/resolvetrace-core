@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/*
+ * Minimal @theme overrides for the shell. Brand tokens / dark mode / custom
+ * fonts come in a later wave; for now we lean on Tailwind v4 defaults so
+ * the scaffold stays small.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+}

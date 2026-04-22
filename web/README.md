@@ -1,0 +1,50 @@
+# ResolveTrace OSS portal (shell)
+
+The Next.js 16 App Router dashboard for self-hosted single-tenant
+ResolveTrace deployments. At this milestone the portal is a **shell**:
+layout + four routes + typecheck + build, with no real API wiring and a
+development-stub login.
+
+## What works today
+
+- `/login` — accepts any non-empty credentials (development stub)
+- `/sessions` — empty list placeholder
+- `/sessions/[id]` — empty detail placeholder
+- `/audit` — empty audit-log placeholder
+- `tsc --noEmit` + `next build` both green
+
+## What's intentionally missing
+
+- Real authentication (OIDC / env-based). Wires once the Portal API lands.
+- API calls to the ingest server. Pages render static empty states.
+- Replay viewer. Needs real chunk-download + timeline UI.
+- Dockerfile integration / production serving model.
+
+## Prerequisites
+
+- Node.js 20+
+- npm 10+
+
+## Local development
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The dev server listens on http://localhost:3000.
+
+## Checks CI runs
+
+```bash
+npm run typecheck    # tsc --noEmit
+npm run build        # next build (includes type-check of routes)
+npm run lint         # next lint
+```
+
+## Where the bigger picture lives
+
+Portal architecture is pinned in the KickOff `web-mvp-technical-architecture-spec.md`
+document (Portal Web App + Portal API split). This shell is the first
+piece; the Portal API and real auth come in later waves.
