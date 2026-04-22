@@ -1,10 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig = {
-  // No `output: "export"` — serving model (static vs standalone) is a
-  // later-wave decision. Keep defaults so the shell builds cleanly under
-  // both the dev server (`next dev`) and a standard Node runtime
-  // (`next start` / `next build`).
+  // Vercel's self-hosting recommendation: `standalone` emits a minimal
+  // Node.js server bundle under `.next/standalone/` that runs independently
+  // of the project's node_modules/. The Dockerfile copies that bundle plus
+  // `.next/static` + `public/` into the runtime image. Keeps portal + ingest
+  // in a single published image with lean layers.
+  output: "standalone",
 } satisfies NextConfig;
 
 export default nextConfig;

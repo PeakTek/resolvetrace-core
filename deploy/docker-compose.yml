@@ -1,8 +1,12 @@
 # ResolveTrace OSS - Docker Compose quickstart
 #
 # Goal: `docker compose up` on a clean machine yields a working ResolveTrace
-# instance reachable at http://resolvetrace.local. Single-tenant mode is the
-# default; no multi-tenant routing or external identity provider required.
+# instance with:
+#   - ingest API on http://localhost:4317   (SDK and replay traffic)
+#   - portal UI on http://localhost:3000    (operator dashboard)
+# Single-tenant mode is the default; no multi-tenant routing or external
+# identity provider required. The `ingest` and `portal` services share the
+# same image (built once, launched with different commands).
 
 version: "3.9"
 
@@ -72,6 +76,37 @@ services:
           "node",
           "-e",
           "fetch('http://localhost:4317/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Portal web app — Next.js 16 App Router served via the standalone Node
+  # bundle emitted at build time (see deploy/Dockerfile). Shares the same
+  # image as the ingest service; only the `command:` differs.
+  portal:
+    image: resolvetrace-core:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["node", "web/server.js"]
+    working_dir: /app
+    environment:
+      # Next.js standalone server reads these to bind the listener.
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: "production"
+    ports:
+      # 3000: portal UI.
+      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
       interval: 10s
       timeout: 3s

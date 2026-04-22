@@ -1,14 +1,15 @@
 # Deploy
 
 Container build + local-stack assets for running the ResolveTrace OSS
-ingest server.
+bundle — Fastify ingest server + Next.js portal, bundled in a single
+image.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage image build (builder + runtime, non-root `node` user). |
-| `docker-compose.yml` | Local-dev stack: ingest server + Postgres + Redis + MinIO. Builds the image locally. |
+| `Dockerfile` | Three-stage image build (builder-server + builder-portal + runtime, non-root `node` user). |
+| `docker-compose.yml` | Local-dev stack: ingest server (4317) + portal UI (3000) + Postgres + Redis + MinIO. Builds the image locally. |
 | `docker-compose.published.yml` | Override file that swaps the locally-built image for the published GHCR image. |
 | `local-env/` | Sample env files for local development. |
 
@@ -39,11 +40,13 @@ working tree:
 ```bash
 cd deploy
 docker compose up --build
-# Server reachable at http://localhost:4317
+# Ingest server reachable at http://localhost:4317
 curl http://localhost:4317/health
+# Portal UI reachable at http://localhost:3000
+open http://localhost:3000
 ```
 
-Use this when you are iterating on server code.
+Use this when you are iterating on server or portal code.
 
 ## Pattern B — pull the published image
 
@@ -91,10 +94,26 @@ docker buildx build \
 ## Image surface
 
 - Base: `node:20-bookworm-slim` (glibc — bcrypt prebuilt binaries just work).
-- Exposes `4317/tcp`. Override with the `PORT` env var.
+- Exposes `4317/tcp` (ingest) and `3000/tcp` (portal).
 - Runs as the unprivileged `node` user (no root).
-- `HEALTHCHECK` pokes `http://127.0.0.1:${PORT}/health` every 30 s.
-- Default `CMD` is `node dist/ingest-api/main.js`.
+- Default `CMD` launches the ingest server: `node dist/ingest-api/main.js`.
+- Dockerfile `HEALTHCHECK` pokes `http://127.0.0.1:${PORT}/health` every 30 s (targets the ingest server by default; `docker-compose.yml`'s portal service overrides this with a check against the Next.js root).
+- The portal command is `node web/server.js`, driven by Next.js's `output: "standalone"` build (`web/next.config.ts`). No devDeps or server-side Node module tree beyond what the standalone bundle packages.
 
-See the [ingest-api README](../server/ingest-api/README.md) for the full
-list of environment variables the server consumes at startup.
+Two entry points, one image — the `docker-compose.yml` file brings both up as sibling services.
+
+See the [ingest-api README](../server/ingest-api/README.md) for the full list of environment variables the server consumes at startup.
+
+## Portal (Next.js)
+
+The portal is served by Next.js's standalone runtime on port 3000. Today it is a shell — four pages (`/login`, `/sessions`, `/sessions/[id]`, `/audit`), all rendering placeholder empty states, plus a development-stub login that accepts any non-empty credentials. Real authentication and API wiring land in later waves; see `web/README.md` for scope.
+
+Environment variables the portal reads at startup:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Listener port |
+| `HOSTNAME` | `0.0.0.0` | Listener bind address (`0.0.0.0` so the Docker network can reach it) |
+| `NODE_ENV` | `production` | Standard Next.js runtime flag |
+
+The portal does NOT currently require `DATABASE_URL`, Redis, or S3 env — those are set on the ingest service in `docker-compose.yml` and are inert for the portal container.
