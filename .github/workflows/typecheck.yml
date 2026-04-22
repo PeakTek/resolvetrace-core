@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Detect lockfile
         id: lockfile
@@ -38,7 +38,7 @@ jobs:
 
       - name: Setup Node 20 (with cache)
         if: steps.lockfile.outputs.present == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
@@ -46,7 +46,7 @@ jobs:
 
       - name: Setup Node 20 (no cache)
         if: steps.lockfile.outputs.present == 'false'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
