@@ -13,6 +13,32 @@ describe("rate limiting", () => {
     close = undefined;
   });
 
+  it("sets X-RateLimit-* headers on a non-exceeding response (addHeadersOnExceeding canary)", async () => {
+    const { app } = await buildTestApp({
+      rateLimits: {
+        events: { soft: 1, hard: 3 },
+      },
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: {
+        authorization: AUTH_HEADER,
+        "content-type": "application/json",
+      },
+      payload: validBatch([
+        validEvent({ eventId: "01HWZX9KT1N2M3J4P5Q6R7S8A0" }),
+      ]),
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.headers["x-ratelimit-limit"]).toBeDefined();
+    expect(res.headers["x-ratelimit-remaining"]).toBeDefined();
+    expect(res.headers["x-ratelimit-reset"]).toBeDefined();
+  });
+
   it("returns 429 with Retry-After + X-RateLimit-* once the burst is exhausted", async () => {
     // Tiny burst budget so the test fires few requests.
     const { app } = await buildTestApp({
