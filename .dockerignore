@@ -38,8 +38,14 @@ Thumbs.db
 # Docs that aren't useful inside the image.
 docs
 examples
-web
 CHANGELOG.md
+
+# Portal (web/) build artifacts — the source tree ships, but
+# node_modules + .next get rebuilt fresh in the builder-portal stage.
+web/node_modules
+web/.next
+web/out
+web/next-env.d.ts
 
 # Docker-related files we don't want copied in by a broad `COPY`.
 .dockerignore
