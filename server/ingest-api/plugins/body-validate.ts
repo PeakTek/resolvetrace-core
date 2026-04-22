@@ -11,7 +11,7 @@
  * Using ajv directly keeps us aligned with the contract's validator.
  */
 
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import AjvImport, { AnySchema, ValidateFunction } from "ajv";
 import addFormatsImport from "ajv-formats";
@@ -73,11 +73,21 @@ const bodyValidatePluginImpl: FastifyPluginAsync = async (fastify) => {
     SessionEndRequest: ajv.compile(SessionEndRequestSchema as AnySchema),
   };
 
-  // Reserve the request prototype slot; attach a per-request closure in an
-  // onRequest hook. Fastify v4+ warns (and v5 throws) on function-valued
-  // decorateRequest because reference types get shared across requests —
-  // the hook pattern creates a fresh closure per request.
-  fastify.decorateRequest("validateBody", null);
+  // Reserve the request prototype slot. v5 rejects `null` for a
+  // function-typed decorator (the declared FastifyRequest augmentation
+  // below types `validateBody` as a callable), so the initial value is
+  // a placeholder function. The onRequest hook below overrides per-request
+  // with a closure that captures the current request's body — the
+  // placeholder would only fire if the hook somehow didn't run, which
+  // means "loud bug", not "silent wrong result".
+  fastify.decorateRequest("validateBody", function validateBodyPlaceholder(
+    this: FastifyRequest,
+    _id: ValidatorId
+  ): unknown {
+    throw new Error(
+      "validateBody called before onRequest hook initialised per-request closure"
+    );
+  });
 
   fastify.addHook("onRequest", async (request) => {
     request.validateBody = (id: ValidatorId) => {

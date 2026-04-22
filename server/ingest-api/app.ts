@@ -77,10 +77,19 @@ export async function buildApp(
       });
       return;
     }
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      reply.code(error.statusCode).send({
+    // v5 narrows `error` to `FastifyError` whose indexable fields are
+    // typed loosely; reach through the object-view we already built for
+    // the rate-limit branch to stay lint-clean across v4 + v5.
+    const statusCode =
+      typeof anyErr["statusCode"] === "number"
+        ? (anyErr["statusCode"] as number)
+        : undefined;
+    const errMessage =
+      typeof anyErr["message"] === "string" ? (anyErr["message"] as string) : "";
+    if (statusCode && statusCode >= 400 && statusCode < 500) {
+      reply.code(statusCode).send({
         error: "bad_request",
-        message: error.message,
+        message: errMessage,
       });
       return;
     }
