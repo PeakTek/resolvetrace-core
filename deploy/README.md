@@ -119,3 +119,12 @@ Environment variables the portal reads at startup:
 | `NODE_ENV` | `production` | Standard Next.js runtime flag |
 
 The portal does NOT currently require `DATABASE_URL`, Redis, or S3 env — those are set on the ingest service in `docker-compose.yml` and are inert for the portal container.
+
+### Connecting to the ingest API
+
+Session list and detail pages query the ingest server over HTTP from server components. Two additional env vars on the `portal` service control that:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `RT_INGEST_URL` | `http://resolvetrace:4317` | Ingest server URL used by Portal server components for session queries. |
+| `RT_PORTAL_API_TOKEN` | — | Bearer token sent to the ingest server. Must match the ingest side's `PORTAL_API_TOKEN` (falls back to `OSS_API_KEY` if the portal-specific one isn't set). |
