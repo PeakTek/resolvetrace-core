@@ -66,6 +66,11 @@ services:
       # OSS runs with a single opaque API key (Bearer token) for the ingest
       # surface. Rotate by redeploying with a new value.
       OSS_API_KEY: "replace-me-with-long-random-string"
+      # Optional separate bearer accepted on the portal query surface
+      # (/api/v1/portal/*). When set, the portal's server-to-server calls
+      # use this instead of the SDK's OSS_API_KEY so the two can be rotated
+      # independently. Leave blank to only accept OSS_API_KEY.
+      PORTAL_API_TOKEN: "replace-me-with-portal-token"
     ports:
       # 4317: HTTP ingest port (events / replay / session).
       - "4317:4317"

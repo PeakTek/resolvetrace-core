@@ -89,4 +89,24 @@ describe("SingleTenantResolver", () => {
     const p = await r.resolveByApiKey("test-api-key-long-enough");
     expect(p.env).toBe("dev");
   });
+
+  it("accepts the optional portalApiKey when configured", async () => {
+    const r = makeResolver({ portalApiKey: "portal-token-very-long-val" });
+    // Both keys resolve to the same principal.
+    const a = await r.resolveByApiKey("test-api-key-long-enough");
+    const b = await r.resolveByApiKey("portal-token-very-long-val");
+    expect(a.config.tenantId).toBe(b.config.tenantId);
+    // A wrong bearer is still rejected when a portal key is set.
+    await expect(r.resolveByApiKey("nope")).rejects.toBeInstanceOf(
+      InvalidApiKeyError
+    );
+  });
+
+  it("rejects an empty portalApiKey (treats it as unset)", async () => {
+    const r = makeResolver({ portalApiKey: "" });
+    // Empty portal key must not be "matched" by an empty presented bearer.
+    await expect(r.resolveByApiKey("")).rejects.toBeInstanceOf(
+      InvalidApiKeyError
+    );
+  });
 });

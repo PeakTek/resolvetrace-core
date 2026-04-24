@@ -44,6 +44,13 @@ export interface SingleTenantResolverOptions {
    * comparison; rejected if the presented key differs.
    */
   apiKey: string;
+  /**
+   * Optional second accepted bearer token. When set, both `apiKey` and
+   * `portalApiKey` authenticate to the same single-tenant principal. Used
+   * so the portal's server-to-server bearer can be rotated independently
+   * of the SDK's ingest key. Unset means only `apiKey` is accepted.
+   */
+  portalApiKey?: string;
   /** Environment stamp returned on principal wrappers. */
   env?: Environment;
   /** Scopes granted to the API-key principal. */
@@ -53,6 +60,7 @@ export interface SingleTenantResolverOptions {
 export class SingleTenantResolver implements TenantConfigResolver {
   private readonly config: TenantConfig;
   private readonly apiKey: string;
+  private readonly portalApiKey: string | undefined;
   private readonly env: Environment;
   private readonly scopes: string[];
 
@@ -68,6 +76,10 @@ export class SingleTenantResolver implements TenantConfigResolver {
       ingestHost: opts.ingestHost ?? DEFAULT_INGEST_HOST,
     };
     this.apiKey = opts.apiKey;
+    this.portalApiKey =
+      opts.portalApiKey && opts.portalApiKey.length > 0
+        ? opts.portalApiKey
+        : undefined;
     this.env = opts.env ?? "prod";
     this.scopes = opts.scopes ?? [...DEFAULT_SCOPES];
   }
@@ -80,7 +92,16 @@ export class SingleTenantResolver implements TenantConfigResolver {
   }
 
   async resolveByApiKey(apiKey: string): Promise<ApiKeyPrincipal> {
-    if (!safeEqual(apiKey, this.apiKey)) {
+    // In OSS single-tenant mode, the ingest bearer and the portal bearer
+    // both resolve to the same principal. Compare against each configured
+    // key with constant-time equality and accept on any match. The loop
+    // form keeps us constant-time: we always evaluate both comparisons
+    // when a portal key is configured rather than short-circuiting.
+    let matched = safeEqual(apiKey, this.apiKey);
+    if (this.portalApiKey !== undefined) {
+      matched = safeEqual(apiKey, this.portalApiKey) || matched;
+    }
+    if (!matched) {
       throw new InvalidApiKeyError();
     }
     return {

@@ -104,6 +104,8 @@ Two entry points, one image — the `docker-compose.yml` file brings both up as 
 
 See the [ingest-api README](../server/ingest-api/README.md) for the full list of environment variables the server consumes at startup.
 
+The ingest service accepts two bearer tokens: `OSS_API_KEY` (SDK / replay traffic) and, optionally, `PORTAL_API_TOKEN` (portal query surface). Keeping them distinct lets the portal's bearer be rotated without breaking SDK integrations and vice versa. If `PORTAL_API_TOKEN` is left blank, the server falls back to only accepting `OSS_API_KEY`.
+
 ## Portal (Next.js)
 
 The portal is served by Next.js's standalone runtime on port 3000. Today it is a shell — four pages (`/login`, `/sessions`, `/sessions/[id]`, `/audit`), all rendering placeholder empty states, plus a development-stub login that accepts any non-empty credentials. Real authentication and API wiring land in later waves; see `web/README.md` for scope.

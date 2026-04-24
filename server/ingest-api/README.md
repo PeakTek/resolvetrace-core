@@ -17,6 +17,20 @@ contract documented in
 Authentication is via `Authorization: Bearer <api-key>` on every request
 except `/health` and `/ready`.
 
+## Portal API (internal)
+
+| Endpoint | Success |
+|---|---|
+| `GET /api/v1/portal/sessions?limit=&cursor=` | `200` |
+| `GET /api/v1/portal/sessions/:sessionId` | `200` (`404` if the session is unknown) |
+
+These routes back the self-hosted portal's sessions views. They are **not
+part of the public SDK contract — subject to change without notice** and
+are intentionally absent from `resolvetrace-contract/api-spec/openapi.yaml`.
+
+Authentication accepts either `OSS_API_KEY` or, when set, the separate
+`PORTAL_API_TOKEN` bearer. Responses carry `X-Portal-Api-Version: 1`.
+
 ## Running locally
 
 The simplest path is the repo's Docker Compose stack:
@@ -44,6 +58,7 @@ npm run dev
 | `LOG_LEVEL` | `info` | Pino log level. |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins. |
 | `OSS_API_KEY` | — | **Required.** Single ingest bearer token. |
+| `PORTAL_API_TOKEN` | — | Optional separate bearer accepted on the portal API surface. When set, both this and `OSS_API_KEY` authenticate; when unset, only `OSS_API_KEY` does. |
 | `RESOLVETRACE_TENANT_ID` | `oss-single-tenant` | Logical tenant id. |
 | `RESOLVETRACE_ENV` | `prod` | One of `prod` / `staging` / `dev`. |
 | `INGEST_HOST` | `resolvetrace.local` | Hostname stamped on principals. |

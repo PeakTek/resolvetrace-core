@@ -24,6 +24,7 @@ import { eventsRoutes } from "./routes/events.js";
 import { replayRoutes } from "./routes/replay.js";
 import { sessionRoutes } from "./routes/session.js";
 import { healthRoutes } from "./routes/health.js";
+import { portalRoutes } from "./routes/portal.js";
 
 export interface BuildAppOptions extends IngestApiDependencies {
   /** Pino log level. Defaults to env / "info". */
@@ -164,6 +165,11 @@ export async function buildApp(
   });
   await fastify.register(sessionRoutes, {
     sessionSink: opts.sessionSink,
+    rateLimitOptions: perClassLimits.session,
+  });
+  await fastify.register(portalRoutes, {
+    sessionRepository: opts.sessionRepository,
+    eventRepository: opts.eventRepository,
     rateLimitOptions: perClassLimits.session,
   });
 

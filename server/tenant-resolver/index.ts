@@ -28,6 +28,10 @@ import { Environment, TenantConfigResolver } from "./types.js";
  * - `INGEST_HOST` (default: `resolvetrace.local`)
  * - `KMS_ALIAS`, `S3_PREFIX`, `REDIS_PREFIX`
  * - `RESOLVETRACE_ENV` (`prod` | `staging` | `dev`; default `prod`)
+ * - `PORTAL_API_TOKEN` — when set, authenticates the portal's server-to-server
+ *   calls to the internal query API. Both this token and `OSS_API_KEY`
+ *   resolve to the same single-tenant principal. Leaving it unset falls
+ *   back to only accepting `OSS_API_KEY`.
  */
 export function createResolver(
   env: NodeJS.ProcessEnv = process.env
@@ -49,6 +53,7 @@ export function createResolver(
     kmsAlias: env.KMS_ALIAS,
     ingestHost: env.INGEST_HOST,
     apiKey,
+    portalApiKey: env.PORTAL_API_TOKEN,
     env: envTag,
   });
 }

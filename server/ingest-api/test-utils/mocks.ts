@@ -20,16 +20,29 @@ import {
   SignedUploadUrl,
   SignedUploadUrlInput,
 } from "../../storage/index.js";
+import {
+  EventRecord,
+  EventRepository,
+  SessionRecord,
+  SessionRepository,
+} from "../types.js";
 
 export interface MockResolverOptions {
   tenantId?: string;
   apiKey?: string;
+  /**
+   * Optional second accepted bearer token. Mirrors the production
+   * `SingleTenantResolver`'s portal-token behaviour so routes guarded by a
+   * principal can be exercised from tests with either credential.
+   */
+  portalApiKey?: string;
   env?: Environment;
 }
 
 export class MockResolver implements TenantConfigResolver {
   readonly config: TenantConfig;
   private readonly apiKey: string;
+  private readonly portalApiKey: string | undefined;
   private readonly env: Environment;
 
   constructor(opts: MockResolverOptions = {}) {
@@ -45,6 +58,7 @@ export class MockResolver implements TenantConfigResolver {
       ingestHost: "resolvetrace.local",
     };
     this.apiKey = opts.apiKey ?? "test-api-key";
+    this.portalApiKey = opts.portalApiKey;
     this.env = opts.env ?? "dev";
   }
 
@@ -57,7 +71,10 @@ export class MockResolver implements TenantConfigResolver {
   }
 
   async resolveByApiKey(apiKey: string): Promise<ApiKeyPrincipal> {
-    if (apiKey !== this.apiKey) {
+    const matches =
+      apiKey === this.apiKey ||
+      (this.portalApiKey !== undefined && apiKey === this.portalApiKey);
+    if (!matches) {
       throw new InvalidApiKeyError();
     }
     return {
@@ -70,6 +87,73 @@ export class MockResolver implements TenantConfigResolver {
 
   invalidate(): void {
     // no-op
+  }
+}
+
+/**
+ * In-memory `SessionRepository` for tests. Accepts a fixed row set and a
+ * pre-computed paginated view; tests assert on the call arguments via
+ * `lastList` / `lastGet`.
+ */
+export class MockSessionRepository implements SessionRepository {
+  public lastList: {
+    tenantId: string;
+    opts: { limit: number; cursor?: string };
+  } | undefined;
+  public lastGet: { tenantId: string; sessionId: string } | undefined;
+
+  constructor(
+    private readonly sessions: SessionRecord[] = [],
+    private readonly nextCursor?: string
+  ) {}
+
+  async list(
+    tenantId: string,
+    opts: { limit: number; cursor?: string }
+  ): Promise<{ sessions: SessionRecord[]; nextCursor?: string }> {
+    this.lastList = { tenantId, opts };
+    return this.nextCursor
+      ? { sessions: this.sessions, nextCursor: this.nextCursor }
+      : { sessions: this.sessions };
+  }
+
+  async get(
+    tenantId: string,
+    sessionId: string
+  ): Promise<SessionRecord | null> {
+    this.lastGet = { tenantId, sessionId };
+    return (
+      this.sessions.find((s) => s.sessionId === sessionId) ?? null
+    );
+  }
+}
+
+/**
+ * In-memory `EventRepository` for tests. Returns the injected event list
+ * verbatim regardless of session id; tests assert on the captured call via
+ * `lastCall`.
+ */
+export class MockEventRepository implements EventRepository {
+  public lastCall: {
+    tenantId: string;
+    sessionId: string;
+    opts: { limit: number; cursor?: string };
+  } | undefined;
+
+  constructor(
+    private readonly events: EventRecord[] = [],
+    private readonly nextCursor?: string
+  ) {}
+
+  async listBySession(
+    tenantId: string,
+    sessionId: string,
+    opts: { limit: number; cursor?: string }
+  ): Promise<{ events: EventRecord[]; nextCursor?: string }> {
+    this.lastCall = { tenantId, sessionId, opts };
+    return this.nextCursor
+      ? { events: this.events, nextCursor: this.nextCursor }
+      : { events: this.events };
   }
 }
 
