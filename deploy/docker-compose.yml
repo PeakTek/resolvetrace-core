@@ -97,6 +97,14 @@ services:
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
       NODE_ENV: "production"
+
+      # --- Ingest API wiring ---
+      # Server components on /sessions and /sessions/[id] call the ingest
+      # service's portal query endpoints. RT_PORTAL_API_TOKEN must match
+      # the token the ingest service is configured to accept (see the
+      # resolvetrace service environment).
+      RT_INGEST_URL: "http://resolvetrace:4317"
+      RT_PORTAL_API_TOKEN: "replace-me-with-portal-token"
     ports:
       # 3000: portal UI.
       - "3000:3000"
