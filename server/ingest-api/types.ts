@@ -9,23 +9,87 @@
 import { ObjectStorage } from "../storage/index.js";
 import { TenantConfigResolver } from "../tenant-resolver/index.js";
 
-/** Pluggable event sink — replaced with real persistence in a later wave. */
+/** Pluggable event sink. In-memory default for tests; Postgres in production. */
 export interface EventSink {
   /**
    * Enqueue a batch of already-validated events for processing. The in-memory
-   * default resolves immediately; a future implementation backed by a real
-   * queue returns once the write is durable.
+   * default resolves immediately; the Postgres implementation returns once the
+   * write is durable.
    */
   enqueue(tenantId: string, events: ReadonlyArray<ValidatedEvent>): Promise<void>;
 }
 
-/** Pluggable session record sink. In-memory default; real DB lands later. */
+/** Pluggable session record sink. In-memory default for tests; Postgres in production. */
 export interface SessionSink {
   recordStart(
     tenantId: string,
     record: SessionStartRecord
   ): Promise<void>;
   recordEnd(tenantId: string, record: SessionEndRecord): Promise<void>;
+}
+
+/**
+ * Read-side access to stored sessions. Consumed by the portal query API.
+ * Implementations map DB rows to plain `SessionRecord` objects with ISO
+ * timestamps; callers do not see `pg.Pool` or DB row types.
+ */
+export interface SessionRepository {
+  list(
+    tenantId: string,
+    opts: {
+      /** Page size. Caller-supplied value is clamped to `[1, 200]`. Default 50. */
+      limit: number;
+      /** Opaque cursor returned by a previous call. */
+      cursor?: string;
+    }
+  ): Promise<{ sessions: SessionRecord[]; nextCursor?: string }>;
+
+  get(tenantId: string, sessionId: string): Promise<SessionRecord | null>;
+}
+
+/**
+ * Read-side access to events scoped to a single session. Consumed by the
+ * portal query API's session-detail route.
+ */
+export interface EventRepository {
+  listBySession(
+    tenantId: string,
+    sessionId: string,
+    opts: {
+      /** Page size. Caller-supplied value is clamped to `[1, 1000]`. Default 200. */
+      limit: number;
+      /** Opaque cursor returned by a previous call. */
+      cursor?: string;
+    }
+  ): Promise<{ events: EventRecord[]; nextCursor?: string }>;
+}
+
+/** Read model returned by `SessionRepository`. */
+export interface SessionRecord {
+  sessionId: string;
+  /** ISO 8601. */
+  startedAt: string;
+  /** ISO 8601 or null if the session is still open. */
+  endedAt: string | null;
+  endedReason: string | null;
+  appVersion: string | null;
+  releaseChannel: string | null;
+  userAnonId: string | null;
+  /** Live count from the events table — ignores any SDK-supplied value. */
+  eventCount: number;
+  replayChunkCount: number | null;
+  client: unknown | null;
+}
+
+/** Read model returned by `EventRepository`. */
+export interface EventRecord {
+  eventId: string;
+  sessionId: string | null;
+  type: string;
+  /** ISO 8601. */
+  capturedAt: string;
+  attributes: Record<string, unknown> | null;
+  clockSkewDetected: boolean;
 }
 
 export interface ValidatedEvent {
@@ -83,6 +147,10 @@ export interface IngestApiDependencies {
   storage: ObjectStorage;
   eventSink: EventSink;
   sessionSink: SessionSink;
+  /** Read-side access to stored sessions (portal API). */
+  sessionRepository: SessionRepository;
+  /** Read-side access to stored events (portal API). */
+  eventRepository: EventRepository;
   /**
    * Idempotency store. Implementations back this with an in-memory LRU or a
    * Redis instance depending on env.

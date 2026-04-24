@@ -7,18 +7,28 @@
 
 import { buildApp } from "../app.js";
 import {
+  EmptyEventRepository,
+  EmptySessionRepository,
   InMemoryEventSink,
   InMemorySessionSink,
 } from "../in-memory-sinks.js";
 import { InMemoryIdempotencyStore } from "../plugins/idempotency.js";
 import { MockResolver, MockStorage } from "./mocks.js";
-import { ReadinessCheck, RateLimitBudget, RateLimitClass } from "../types.js";
+import {
+  EventRepository,
+  RateLimitBudget,
+  RateLimitClass,
+  ReadinessCheck,
+  SessionRepository,
+} from "../types.js";
 
 export interface TestAppOverrides {
   storage?: MockStorage;
   resolver?: MockResolver;
   eventSink?: InMemoryEventSink;
   sessionSink?: InMemorySessionSink;
+  sessionRepository?: SessionRepository;
+  eventRepository?: EventRepository;
   idempotencyStore?: InMemoryIdempotencyStore;
   readinessChecks?: ReadinessCheck[];
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
@@ -29,6 +39,10 @@ export async function buildTestApp(overrides: TestAppOverrides = {}) {
   const resolver = overrides.resolver ?? new MockResolver();
   const eventSink = overrides.eventSink ?? new InMemoryEventSink();
   const sessionSink = overrides.sessionSink ?? new InMemorySessionSink();
+  const sessionRepository =
+    overrides.sessionRepository ?? new EmptySessionRepository();
+  const eventRepository =
+    overrides.eventRepository ?? new EmptyEventRepository();
   const idempotencyStore =
     overrides.idempotencyStore ?? new InMemoryIdempotencyStore();
 
@@ -37,6 +51,8 @@ export async function buildTestApp(overrides: TestAppOverrides = {}) {
     storage,
     eventSink,
     sessionSink,
+    sessionRepository,
+    eventRepository,
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,
@@ -49,6 +65,8 @@ export async function buildTestApp(overrides: TestAppOverrides = {}) {
     resolver,
     eventSink,
     sessionSink,
+    sessionRepository,
+    eventRepository,
     idempotencyStore,
   };
 }

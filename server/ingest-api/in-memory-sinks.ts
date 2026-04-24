@@ -1,17 +1,20 @@
 /**
- * In-memory implementations of `EventSink` and `SessionSink`.
+ * In-memory implementations of `EventSink`, `SessionSink`, and empty-read
+ * stubs for the session / event repositories.
  *
- * Wave 4 OSS scope: the HTTP surface is end-to-end but durable persistence
- * lands in a later wave. These sinks keep the server observably correct
- * (no dropped requests, deterministic test fixtures) without pretending
- * to be a real queue or DB.
- *
- * A real implementation swaps these out without touching route code.
+ * The sinks are used by the test suite via `buildTestApp`. The empty
+ * repository stubs are also used by `main.ts` when `DATABASE_URL` is not
+ * configured, so the ingest server can still boot for smoke tests without
+ * a database; the portal query routes then just return empty lists.
  */
 
 import {
+  EventRecord,
+  EventRepository,
   EventSink,
   SessionEndRecord,
+  SessionRecord,
+  SessionRepository,
   SessionSink,
   SessionStartRecord,
   ValidatedEvent,
@@ -74,5 +77,28 @@ export class InMemorySessionSink implements SessionSink {
   /** Visible for tests. */
   getEnd(tenantId: string, sessionId: string): SessionEndRecord | undefined {
     return this.endRecords.get(`${tenantId}:${sessionId}`);
+  }
+}
+
+/**
+ * Repository stub that always returns an empty list / null. Used when the
+ * server boots without `DATABASE_URL` configured — the query endpoints
+ * still respond correctly, there's just nothing to show.
+ */
+export class EmptySessionRepository implements SessionRepository {
+  async list(): Promise<{ sessions: SessionRecord[]; nextCursor?: string }> {
+    return { sessions: [] };
+  }
+  async get(): Promise<SessionRecord | null> {
+    return null;
+  }
+}
+
+export class EmptyEventRepository implements EventRepository {
+  async listBySession(): Promise<{
+    events: EventRecord[];
+    nextCursor?: string;
+  }> {
+    return { events: [] };
   }
 }
