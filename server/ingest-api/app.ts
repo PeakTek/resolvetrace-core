@@ -112,6 +112,7 @@ export async function buildApp(
     allowedHeaders: [
       "Authorization",
       "Content-Type",
+      "Cache-Control",
       "X-Request-ID",
       "X-Idempotency-Key",
     ],
