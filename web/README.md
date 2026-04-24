@@ -15,9 +15,9 @@ remain placeholder callouts.
 
 ## What's intentionally missing
 
-- Real authentication (OIDC / env-based). Wires once the Portal API lands.
+- Real authentication (OIDC / env-based). The portal-to-ingest bearer is server-to-server today.
 - Replay viewer. Needs real chunk-download + timeline UI.
-- Dockerfile integration / production serving model.
+- Audit log page. Still an empty-state placeholder.
 
 ## Prerequisites
 
@@ -44,6 +44,7 @@ npm run lint         # next lint
 
 ## Where the bigger picture lives
 
-Portal architecture is pinned in the KickOff `web-mvp-technical-architecture-spec.md`
-document (Portal Web App + Portal API split). This shell is the first
-piece; the Portal API and real auth come in later waves.
+Portal architecture follows the Portal Web App + Portal API split. Real
+auth for the portal user session is still a later wave; today the
+portal's server-side calls use a bearer token shared with the ingest
+service.

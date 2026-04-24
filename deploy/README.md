@@ -108,7 +108,7 @@ The ingest service accepts two bearer tokens: `OSS_API_KEY` (SDK / replay traffi
 
 ## Portal (Next.js)
 
-The portal is served by Next.js's standalone runtime on port 3000. Today it is a shell — four pages (`/login`, `/sessions`, `/sessions/[id]`, `/audit`), all rendering placeholder empty states, plus a development-stub login that accepts any non-empty credentials. Real authentication and API wiring land in later waves; see `web/README.md` for scope.
+The portal is served by Next.js's standalone runtime on port 3000. `/sessions` and `/sessions/[id]` render live data from the ingest server; `/login` is a development stub that accepts any non-empty credentials, and `/audit` is still an empty-state placeholder. Real authentication and the audit log land in later waves; see `web/README.md` for scope.
 
 Environment variables the portal reads at startup:
 
