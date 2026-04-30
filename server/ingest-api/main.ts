@@ -37,6 +37,12 @@ import {
   SessionSink,
 } from "./types.js";
 
+function parseBoolEnv(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 async function main(): Promise<void> {
   const port = parseInt(process.env.PORT ?? "4317", 10);
   const host = process.env.HOST ?? "0.0.0.0";
@@ -45,6 +51,10 @@ async function main(): Promise<void> {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+  // When true, `/v1/events` rejects events whose session_id has not been
+  // started via `/v1/session/start`. Default false keeps the legacy
+  // auto-derive path so older SDKs continue to ingest unchanged.
+  const strictSessions = parseBoolEnv(process.env.INGEST_STRICT_SESSIONS);
 
   const resolver = createResolver();
   const storage = createStorage();
@@ -84,7 +94,7 @@ async function main(): Promise<void> {
   if (databaseUrl && databaseUrl.length > 0) {
     pgPool = createPgPool(databaseUrl);
     await runMigrations(pgPool);
-    eventSink = new PostgresEventSink(pgPool);
+    eventSink = new PostgresEventSink(pgPool, { strictSessions });
     sessionSink = new PostgresSessionSink(pgPool);
     sessionRepository = new PostgresSessionRepository(pgPool);
     eventRepository = new PostgresEventRepository(pgPool);
@@ -158,7 +168,10 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   await app.listen({ port, host });
-  app.log.info({ port, host }, "ingest API listening");
+  app.log.info(
+    { port, host, strictSessions },
+    "ingest API listening"
+  );
 }
 
 main().catch((err) => {

@@ -62,6 +62,16 @@ services:
       # --- Secrets ---
       SECRETS_MODE: "env"
 
+      # --- Strict-session mode ---
+      # When `true`, /v1/events rejects events whose session_id has not been
+      # started via /v1/session/start (HTTP 409 session_unknown), and events
+      # missing session_id altogether are rejected with HTTP 400
+      # session_required. Default `false` preserves the existing
+      # auto-derive-on-first-event behavior so older SDK versions keep
+      # working. Flip to `true` once your SDK fleet is on session-managed
+      # clients.
+      INGEST_STRICT_SESSIONS: "false"
+
       # --- Ingest API key ---
       # OSS runs with a single opaque API key (Bearer token) for the ingest
       # surface. Rotate by redeploying with a new value.

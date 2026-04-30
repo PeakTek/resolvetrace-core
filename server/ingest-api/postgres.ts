@@ -21,8 +21,10 @@ import {
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
+  SessionRequiredError,
   SessionSink,
   SessionStartRecord,
+  SessionUnknownError,
   ValidatedEvent,
 } from "./types.js";
 
@@ -113,14 +115,73 @@ export async function runMigrations(
 
 // --- Sinks -------------------------------------------------------------
 
+/** Options for `PostgresEventSink`. */
+export interface PostgresEventSinkOptions {
+  /**
+   * When `true`, events whose `session_id` does not resolve in the `sessions`
+   * table for the tenant are rejected with `SessionUnknownError`, and events
+   * missing `session_id` entirely are rejected with `SessionRequiredError`.
+   *
+   * When `false` (default), the legacy auto-derive path is taken: a session
+   * row is upserted on first-seen using the event's `captured_at` as the
+   * derived `started_at`, and events with `session_id = null` are persisted
+   * as-is.
+   */
+  strictSessions?: boolean;
+}
+
 export class PostgresEventSink implements EventSink {
-  constructor(private readonly pool: PgPool) {}
+  private readonly strictSessions: boolean;
+
+  constructor(
+    private readonly pool: PgPool,
+    options: PostgresEventSinkOptions = {}
+  ) {
+    this.strictSessions = options.strictSessions ?? false;
+  }
+
+  /**
+   * Look up which of `sessionIds` have an existing row for `tenantId`. The
+   * returned set contains the resolved IDs only; callers diff against the
+   * requested IDs to find unresolved ones.
+   */
+  private async resolveSessionIds(
+    tenantId: string,
+    sessionIds: ReadonlyArray<string>
+  ): Promise<Set<string>> {
+    if (sessionIds.length === 0) return new Set();
+    const res = await this.pool.query<{ session_id: string }>(
+      `SELECT session_id FROM sessions
+        WHERE tenant_id = $1 AND session_id = ANY($2::text[])`,
+      [tenantId, [...sessionIds]]
+    );
+    return new Set(res.rows.map((r) => r.session_id));
+  }
 
   async enqueue(
     tenantId: string,
     events: ReadonlyArray<ValidatedEvent>
   ): Promise<void> {
     if (events.length === 0) return;
+
+    if (this.strictSessions) {
+      // 1. Any event missing session_id fails the whole batch with 400.
+      if (events.some((e) => !e.sessionId)) {
+        throw new SessionRequiredError();
+      }
+      // 2. Pre-flight resolution: every distinct session_id must already
+      //    exist for this tenant. The SDK is expected to have pipelined
+      //    /v1/session/start ahead of this batch.
+      const distinctIds = Array.from(
+        new Set(events.map((e) => e.sessionId as string))
+      );
+      const resolved = await this.resolveSessionIds(tenantId, distinctIds);
+      const unresolved = distinctIds.filter((id) => !resolved.has(id));
+      if (unresolved.length > 0) {
+        throw new SessionUnknownError(unresolved);
+      }
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -143,11 +204,13 @@ export class PostgresEventSink implements EventSink {
             evt.clockSkewDetected ?? false,
           ]
         );
-        if (evt.sessionId) {
-          // Derive a minimal session row on first-seen — keeps listings
-          // correct even when the SDK never calls /session/start.
-          // `started_at` uses LEAST semantics so an earlier explicit start
-          // still wins.
+        // In strict mode the session row is guaranteed to exist (we
+        // pre-flighted), so we skip the upsert. In lenient mode we keep the
+        // legacy auto-derive: insert a minimal session row on first-seen so
+        // listings stay correct even when the SDK never calls /session/start.
+        // `started_at` uses LEAST semantics so an earlier explicit start
+        // still wins.
+        if (!this.strictSessions && evt.sessionId) {
           await client.query(
             `INSERT INTO sessions (tenant_id, session_id, started_at)
              VALUES ($1, $2, $3)
@@ -175,6 +238,32 @@ export class PostgresSessionSink implements SessionSink {
     tenantId: string,
     record: SessionStartRecord
   ): Promise<void> {
+    // When the start carries an `identify` block, it wins outright over any
+    // previously stored identity for this session. The SDK only re-issues
+    // start with identify when it has new identity to project (e.g. a login
+    // event); honoring last-writer-wins keeps the row in sync with the
+    // SDK's view without needing a separate identify endpoint.
+    const identifyProvided = record.identify !== undefined;
+    const userIdFromIdentify = record.identify?.userId ?? null;
+    const userAnonId =
+      identifyProvided && userIdFromIdentify !== undefined
+        ? userIdFromIdentify
+        : record.userAnonId ?? null;
+    // Compose the persisted client blob. If identify is present, embed it so
+    // queries can see the latest traits without an extra column.
+    let clientPayload: string | null = null;
+    if (record.client !== undefined || identifyProvided) {
+      const base =
+        record.client !== undefined && record.client !== null
+          ? (record.client as Record<string, unknown>)
+          : {};
+      const composed: Record<string, unknown> = { ...base };
+      if (identifyProvided) {
+        composed.identify = record.identify;
+      }
+      clientPayload = JSON.stringify(composed);
+    }
+
     await this.pool.query(
       `INSERT INTO sessions (
          tenant_id, session_id, started_at,
@@ -184,8 +273,14 @@ export class PostgresSessionSink implements SessionSink {
          SET started_at      = LEAST(sessions.started_at, EXCLUDED.started_at),
              app_version     = COALESCE(EXCLUDED.app_version, sessions.app_version),
              release_channel = COALESCE(EXCLUDED.release_channel, sessions.release_channel),
-             user_anon_id    = COALESCE(EXCLUDED.user_anon_id, sessions.user_anon_id),
-             client          = COALESCE(EXCLUDED.client, sessions.client),
+             user_anon_id    = CASE
+                                 WHEN $8::boolean THEN EXCLUDED.user_anon_id
+                                 ELSE COALESCE(EXCLUDED.user_anon_id, sessions.user_anon_id)
+                               END,
+             client          = CASE
+                                 WHEN $8::boolean THEN EXCLUDED.client
+                                 ELSE COALESCE(EXCLUDED.client, sessions.client)
+                               END,
              updated_at      = now()`,
       [
         tenantId,
@@ -193,8 +288,9 @@ export class PostgresSessionSink implements SessionSink {
         record.startedAt,
         record.appVersion ?? null,
         record.releaseChannel ?? null,
-        record.userAnonId ?? null,
-        record.client !== undefined ? JSON.stringify(record.client) : null,
+        userAnonId,
+        clientPayload,
+        identifyProvided,
       ]
     );
   }

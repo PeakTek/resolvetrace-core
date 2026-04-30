@@ -106,6 +106,28 @@ See the [ingest-api README](../server/ingest-api/README.md) for the full list of
 
 The ingest service accepts two bearer tokens: `OSS_API_KEY` (SDK / replay traffic) and, optionally, `PORTAL_API_TOKEN` (portal query surface). Keeping them distinct lets the portal's bearer be rotated without breaking SDK integrations and vice versa. If `PORTAL_API_TOKEN` is left blank, the server falls back to only accepting `OSS_API_KEY`.
 
+### Strict-session mode (`INGEST_STRICT_SESSIONS`)
+
+Set `INGEST_STRICT_SESSIONS=true` to reject events whose `session_id` has
+not been started via `POST /v1/session/start`. Default is `false`
+(lenient) for backwards compatibility with older SDKs that don't issue
+`/v1/session/start`. Newer SDK versions automatically issue start, so flip
+to `true` once your fleet is upgraded.
+
+Behavior under strict mode:
+
+- Events arriving with an unknown `(tenant_id, session_id)` tuple are
+  rejected with HTTP `409` and body `{ "error": "session_unknown",
+  "unresolved_session_ids": [...], "message": "..." }`. The client may
+  re-issue `POST /v1/session/start` for each id and retry the batch.
+- Events arriving without a `session_id` are rejected with HTTP `400` and
+  body `{ "error": "session_required", "message": "..." }`. Whole batches
+  are rejected if any event in the batch is missing a `session_id`.
+
+Behavior under the default lenient mode is unchanged: events without a
+recognized session are still accepted, and a session row is auto-derived
+from the first event's `captured_at` so listings stay correct.
+
 ## Portal (Next.js)
 
 The portal is served by Next.js's standalone runtime on port 3000. `/sessions` and `/sessions/[id]` render live data from the ingest server; `/login` is a development stub that accepts any non-empty credentials, and `/audit` is still an empty-state placeholder. Real authentication and the audit log land in later waves; see `web/README.md` for scope.

@@ -17,7 +17,13 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
-import { EventSink, IdempotencyStore, ValidatedEvent } from "../types.js";
+import {
+  EventSink,
+  IdempotencyStore,
+  SessionRequiredError,
+  SessionUnknownError,
+  ValidatedEvent,
+} from "../types.js";
 
 const DEDUP_WINDOW_SECONDS = 24 * 60 * 60; // 24 h, ADR-0011
 
@@ -54,6 +60,7 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (
       let accepted = 0;
       let duplicates = 0;
       const fresh: ValidatedEvent[] = [];
+      const freshKeys: string[] = [];
       for (const evt of body.events) {
         const key = `${tenantId}:${evt.eventId}`;
         // eslint-disable-next-line no-await-in-loop
@@ -64,13 +71,49 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (
         if (reserved) {
           accepted += 1;
           fresh.push(evt);
+          freshKeys.push(key);
         } else {
           duplicates += 1;
         }
       }
 
       if (fresh.length > 0) {
-        await opts.eventSink.enqueue(tenantId, fresh);
+        try {
+          await opts.eventSink.enqueue(tenantId, fresh);
+        } catch (err) {
+          // The batch was rejected before persistence. Release the
+          // idempotency reservations we just took so the SDK's retry — which
+          // ships the same eventIds — is not falsely counted as duplicates.
+          if (
+            err instanceof SessionUnknownError ||
+            err instanceof SessionRequiredError
+          ) {
+            const release = opts.idempotencyStore.release;
+            if (release) {
+              for (const k of freshKeys) {
+                // eslint-disable-next-line no-await-in-loop
+                await release.call(opts.idempotencyStore, k);
+              }
+            }
+          }
+          if (err instanceof SessionUnknownError) {
+            reply.code(409);
+            return {
+              error: "session_unknown",
+              unresolved_session_ids: err.unresolvedSessionIds,
+              message:
+                "Unknown session(s) for this tenant. Issue POST /v1/session/start with these session_id values and retry the batch.",
+            };
+          }
+          if (err instanceof SessionRequiredError) {
+            reply.code(400);
+            return {
+              error: "session_required",
+              message: "session_id is required on every event in strict mode.",
+            };
+          }
+          throw err;
+        }
       }
 
       if (duplicates === body.events.length) {

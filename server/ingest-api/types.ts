@@ -120,6 +120,19 @@ export interface SessionStartRecord {
   releaseChannel?: string;
   client?: unknown;
   userAnonId?: string;
+  /**
+   * Latest known identity for this session. When present, the session row is
+   * upserted with these fields so a re-issued start (e.g. after login)
+   * reflects the current identity. Mid-session events ship their own actor
+   * decoration; the row only changes when start is re-issued.
+   */
+  identify?: SessionIdentify;
+}
+
+/** Identity decoration optionally carried on `/v1/session/start`. */
+export interface SessionIdentify {
+  userId?: string | null;
+  traits?: Record<string, unknown>;
 }
 
 export interface SessionEndRecord {
@@ -128,6 +141,39 @@ export interface SessionEndRecord {
   reason: string;
   eventCount?: number;
   replayChunkCount?: number;
+}
+
+/**
+ * Server-internal error raised by the event sink when one or more events in
+ * a batch carry a `session_id` that does not resolve in the `sessions` table
+ * for the requesting tenant. Surfaced by the `/v1/events` route as a 409
+ * `session_unknown` response so the SDK can re-issue `/v1/session/start` and
+ * retry the batch once.
+ *
+ * Only thrown when strict-session mode is enabled. In the default lenient
+ * mode, the sink falls back to the auto-derive path and never raises this.
+ */
+export class SessionUnknownError extends Error {
+  readonly unresolvedSessionIds: string[];
+  constructor(unresolvedSessionIds: string[]) {
+    super(
+      `Unknown session(s) for this tenant: ${unresolvedSessionIds.join(", ")}`
+    );
+    this.name = "SessionUnknownError";
+    this.unresolvedSessionIds = unresolvedSessionIds;
+  }
+}
+
+/**
+ * Server-internal error raised by the event sink when an event in the batch
+ * is missing `session_id` while strict-session mode is enabled. Mapped by
+ * the route to a 400 `session_required` response.
+ */
+export class SessionRequiredError extends Error {
+  constructor() {
+    super("session_id is required on every event in strict mode.");
+    this.name = "SessionRequiredError";
+  }
 }
 
 /** Readiness probe. Implementations may probe DB, storage, or other deps. */
@@ -200,4 +246,13 @@ export interface IdempotencyStore {
    * prior reservation exists within the dedup window.
    */
   reserve(key: string, ttlSeconds: number): Promise<boolean>;
+  /**
+   * Optional. Drop a previously reserved key so the next call to `reserve`
+   * with the same key returns `true` again. Used by the events route when a
+   * batch is rejected before persistence (e.g. a strict-session 409) so the
+   * SDK's retry of the same eventIds is not falsely flagged as duplicates.
+   * Implementations that cannot support release safely (e.g. distributed
+   * stores without strong consistency) may leave this unimplemented.
+   */
+  release?(key: string): Promise<void>;
 }

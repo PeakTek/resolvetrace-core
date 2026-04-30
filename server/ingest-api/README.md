@@ -71,6 +71,7 @@ npm run dev
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | from credential chain | Optional explicit creds. |
 | `AUTH_MODE` | `local` | `local` (bcrypt admin user) or `oidc` (portal users only). Does not affect ingest API key. |
 | `SECRETS_MODE` | `env` | `env` or `parameter-store`. |
+| `INGEST_STRICT_SESSIONS` | `false` | When `true`, `POST /v1/events` rejects events whose `session_id` has not been started via `POST /v1/session/start` (`409 session_unknown`) and events missing `session_id` (`400 session_required`). Default `false` keeps the auto-derive-on-first-event path for backwards compatibility with older SDKs. Flip to `true` once your SDK fleet is on session-managed clients. |
 
 ## Rate limits
 

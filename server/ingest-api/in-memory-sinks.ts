@@ -53,10 +53,29 @@ export class InMemorySessionSink implements SessionSink {
     record: SessionStartRecord
   ): Promise<void> {
     const key = `${tenantId}:${record.sessionId}`;
-    // Idempotent — first writer wins. A repeat start with the same id is a no-op.
-    if (!this.startRecords.has(key)) {
+    const existing = this.startRecords.get(key);
+    if (!existing) {
       this.startRecords.set(key, { ...record });
+      return;
     }
+    // Idempotent upsert. `started_at` settles to the earliest seen value
+    // (LEAST), so a repeat start with a later timestamp doesn't move the
+    // session forward. When `identify` is provided, it wins outright over
+    // any previously stored identity for this session — the SDK only
+    // re-issues start with identify when there's a new identity to project.
+    const earlierStartedAt =
+      existing.startedAt <= record.startedAt
+        ? existing.startedAt
+        : record.startedAt;
+    const merged: SessionStartRecord = {
+      ...existing,
+      ...record,
+      startedAt: earlierStartedAt,
+    };
+    if (record.identify === undefined) {
+      merged.identify = existing.identify;
+    }
+    this.startRecords.set(key, merged);
   }
 
   async recordEnd(

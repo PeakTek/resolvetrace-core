@@ -36,6 +36,10 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
         releaseChannel?: string;
         client?: unknown;
         userAnonId?: string;
+        identify?: {
+          userId?: string | null;
+          traits?: Record<string, unknown>;
+        };
       };
 
       const principal = request.principal;
@@ -51,6 +55,7 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
         releaseChannel: body.releaseChannel,
         client: body.client,
         userAnonId: body.userAnonId,
+        identify: body.identify,
       });
 
       reply.code(201);

@@ -16,17 +16,28 @@ import { InMemoryIdempotencyStore } from "../plugins/idempotency.js";
 import { MockResolver, MockStorage } from "./mocks.js";
 import {
   EventRepository,
+  EventSink,
   RateLimitBudget,
   RateLimitClass,
   ReadinessCheck,
   SessionRepository,
+  SessionSink,
 } from "../types.js";
 
-export interface TestAppOverrides {
+export interface TestAppOverrides<
+  ES extends EventSink = InMemoryEventSink,
+  SS extends SessionSink = InMemorySessionSink,
+> {
   storage?: MockStorage;
   resolver?: MockResolver;
-  eventSink?: InMemoryEventSink;
-  sessionSink?: InMemorySessionSink;
+  /**
+   * Event sink. Defaults to a fresh `InMemoryEventSink`. Tests that need
+   * strict-mode session resolution can pass a `PostgresEventSink` backed by
+   * a fake `PgPool` here.
+   */
+  eventSink?: ES;
+  /** Session sink. Defaults to a fresh `InMemorySessionSink`. */
+  sessionSink?: SS;
   sessionRepository?: SessionRepository;
   eventRepository?: EventRepository;
   idempotencyStore?: InMemoryIdempotencyStore;
@@ -34,11 +45,16 @@ export interface TestAppOverrides {
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
 }
 
-export async function buildTestApp(overrides: TestAppOverrides = {}) {
+export async function buildTestApp<
+  ES extends EventSink = InMemoryEventSink,
+  SS extends SessionSink = InMemorySessionSink,
+>(overrides: TestAppOverrides<ES, SS> = {}) {
   const storage = overrides.storage ?? new MockStorage();
   const resolver = overrides.resolver ?? new MockResolver();
-  const eventSink = overrides.eventSink ?? new InMemoryEventSink();
-  const sessionSink = overrides.sessionSink ?? new InMemorySessionSink();
+  const eventSink = (overrides.eventSink ??
+    (new InMemoryEventSink() as unknown as ES)) as ES;
+  const sessionSink = (overrides.sessionSink ??
+    (new InMemorySessionSink() as unknown as SS)) as SS;
   const sessionRepository =
     overrides.sessionRepository ?? new EmptySessionRepository();
   const eventRepository =

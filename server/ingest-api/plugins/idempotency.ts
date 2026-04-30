@@ -51,6 +51,10 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     return true;
   }
 
+  async release(key: string): Promise<void> {
+    this.map.delete(key);
+  }
+
   /** Visible for tests. */
   size(): number {
     return this.map.size;

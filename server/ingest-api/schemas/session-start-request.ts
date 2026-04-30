@@ -40,6 +40,22 @@ const schema = {
       },
     },
     userAnonId: { type: "string", minLength: 1, maxLength: 128 },
+    identify: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        userId: {
+          oneOf: [
+            { type: "string", minLength: 1, maxLength: 128 },
+            { type: "null" },
+          ],
+        },
+        traits: {
+          type: "object",
+          patternProperties: { "^(.*)$": {} },
+        },
+      },
+    },
   },
 } as const;
 
