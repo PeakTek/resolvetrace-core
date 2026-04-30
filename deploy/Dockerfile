@@ -102,6 +102,13 @@ COPY --from=builder-server --chown=node:node /app/dist ./dist
 COPY --from=builder-server --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder-server --chown=node:node /app/package.json ./package.json
 
+# SQL migrations live alongside their loader. `tsc` only emits .ts → .js,
+# so the .sql files don't get into ./dist on their own — copy them into
+# the same directory layout the loader resolves at runtime
+# (`<dir-of-postgres.js>/migrations/*.sql`).
+COPY --from=builder-server --chown=node:node \
+    /app/server/ingest-api/migrations ./dist/ingest-api/migrations
+
 # --- Portal payload ---
 # Next.js "standalone" emits its own node_modules tree + server.js under
 # .next/standalone; .next/static and public/ are sibling assets that the
