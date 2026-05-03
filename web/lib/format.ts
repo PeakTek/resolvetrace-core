@@ -22,11 +22,3 @@ export function formatRelative(iso: string, now: Date = new Date()): string {
   if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
   return then.toLocaleString();
 }
-
-/**
- * Clip a string to `max` characters, appending an ellipsis when truncated.
- */
-export function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, Math.max(0, max - 1)) + "\u2026";
-}

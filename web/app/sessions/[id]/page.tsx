@@ -6,7 +6,7 @@ import {
   IngestApiError,
   type PortalSessionDetailResponse,
 } from "@/lib/ingest-api";
-import { formatRelative, truncate } from "@/lib/format";
+import { formatRelative } from "@/lib/format";
 
 type LoadResult =
   | { status: "ok"; data: PortalSessionDetailResponse }
@@ -27,10 +27,10 @@ async function loadSession(id: string): Promise<LoadResult> {
   }
 }
 
-function previewAttributes(attrs: Record<string, unknown> | null): string {
+function formatAttributes(attrs: Record<string, unknown> | null): string {
   if (!attrs) return "—";
   try {
-    return JSON.stringify(attrs);
+    return JSON.stringify(attrs, null, 2);
   } catch {
     return "[unserializable]";
   }
@@ -205,29 +205,25 @@ export default async function SessionDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {events.map((e) => {
-                  const fullPreview = previewAttributes(e.attributes);
-                  return (
-                    <tr
-                      key={e.eventId}
-                      className="border-t border-neutral-100 align-top"
+                {events.map((e) => (
+                  <tr
+                    key={e.eventId}
+                    className="border-t border-neutral-100 align-top"
+                  >
+                    <td className="px-4 py-2 font-mono text-xs">{e.type}</td>
+                    <td
+                      className="px-4 py-2 text-neutral-700"
+                      title={e.capturedAt}
                     >
-                      <td className="px-4 py-2 font-mono text-xs">{e.type}</td>
-                      <td
-                        className="px-4 py-2 text-neutral-700"
-                        title={e.capturedAt}
-                      >
-                        {formatRelative(e.capturedAt)}
-                      </td>
-                      <td
-                        className="px-4 py-2 font-mono text-xs text-neutral-700"
-                        title={fullPreview}
-                      >
-                        {truncate(fullPreview, 80)}
-                      </td>
-                    </tr>
-                  );
-                })}
+                      {formatRelative(e.capturedAt)}
+                    </td>
+                    <td className="px-4 py-2">
+                      <pre className="whitespace-pre-wrap break-all font-mono text-xs text-neutral-700">
+                        {formatAttributes(e.attributes)}
+                      </pre>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
