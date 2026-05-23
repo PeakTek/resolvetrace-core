@@ -43,13 +43,9 @@ const schema = {
     identify: {
       type: "object",
       additionalProperties: false,
+      required: ["userId"],
       properties: {
-        userId: {
-          oneOf: [
-            { type: "string", minLength: 1, maxLength: 128 },
-            { type: "null" },
-          ],
-        },
+        userId: { type: "string", minLength: 1, maxLength: 128 },
         traits: {
           type: "object",
           patternProperties: { "^(.*)$": {} },
