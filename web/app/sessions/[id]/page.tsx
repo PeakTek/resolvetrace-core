@@ -3,6 +3,7 @@ import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { SessionTimeline } from "@/components/session-timeline";
 import { SupportCodeBadge } from "@/components/support-code-badge";
+import { DeleteSession } from "@/components/delete-session";
 import {
   createIngestApiClient,
   IngestApiError,
@@ -64,6 +65,13 @@ export default async function SessionDetailPage({
 }) {
   const { id } = await params;
   const result = await loadSession(id);
+  // Render the destructive delete control only when this deployment's portal
+  // token is admin-scoped. The server enforces the scope on the DELETE itself
+  // regardless; this just hides the control from viewer deployments.
+  const canDelete =
+    result.status === "ok"
+      ? await createIngestApiClient().isAdmin()
+      : false;
 
   if (result.status === "error") {
     return (
@@ -200,6 +208,19 @@ export default async function SessionDetailPage({
             capped={events.length >= AUTO_CAPTURE_CAP}
           />
         </Card>
+
+        {canDelete ? (
+          <Card className="space-y-3 p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+              Danger zone
+            </h2>
+            <p className="text-sm text-neutral-600">
+              Permanently delete this session along with its events and replay
+              artifacts. This action is recorded in the audit log.
+            </p>
+            <DeleteSession sessionId={session.sessionId} />
+          </Card>
+        ) : null}
       </div>
     </Shell>
   );

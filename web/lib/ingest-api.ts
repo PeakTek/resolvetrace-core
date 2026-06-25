@@ -84,6 +84,76 @@ export type SupportCodeLookupResult =
   | { status: "invalid" }
   | { status: "notFound" };
 
+/**
+ * One row of the admin audit log. Mirrors A1's `GET /api/v1/portal/audit`
+ * projection. `metadata` is a free-form, PII-free object (e.g. `{result:"hit"}`
+ * for a lookup, `{retention:{eventsDays:30}}` for a settings change).
+ */
+export interface PortalAuditEntry {
+  actor: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  occurredAt: string;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface PortalAuditPage {
+  entries: PortalAuditEntry[];
+  nextCursor: string | null;
+}
+
+/** Effective retention windows in days. `0` means "keep forever". */
+export interface PortalRetentionWindows {
+  eventsDays: number;
+  sessionsDays: number;
+  replayDays: number;
+}
+
+/** Whether a window's effective value comes from a persisted override or env. */
+export type PortalRetentionSource = "override" | "env";
+
+export interface PortalRetentionSettings {
+  retention: PortalRetentionWindows;
+  defaults: PortalRetentionWindows;
+  editable: boolean;
+  source: Record<keyof PortalRetentionWindows, PortalRetentionSource>;
+  purge: {
+    enabled: boolean;
+    intervalHours: number;
+    batchSize: number;
+  };
+}
+
+export interface PortalRetentionUpdateResult {
+  retention: PortalRetentionWindows;
+  updated: Partial<PortalRetentionWindows>;
+}
+
+export interface PortalPurgeResult {
+  events: number;
+  sessions: number;
+  replayObjects: number;
+}
+
+export interface PortalSessionDeleteResult {
+  sessionId: string;
+  eventsDeleted: number;
+  replayObjects: number;
+}
+
+/**
+ * Outcome wrapper for the admin-gated governance calls. The ingest server
+ * returns 403 when the portal token lacks the `audit:read` scope (a viewer
+ * deployment); we surface that distinctly so pages can render a not-authorized
+ * state rather than a generic error. `notFound` is only meaningful for delete.
+ */
+export type AdminResult<T> =
+  | { status: "ok"; data: T }
+  | { status: "forbidden" }
+  | { status: "notFound" }
+  | { status: "invalid"; message: string };
+
 export interface IngestApiClient {
   readonly baseUrl: string;
   listSessions(opts?: {
@@ -92,6 +162,29 @@ export interface IngestApiClient {
   }): Promise<PortalSessionListResponse>;
   getSession(id: string): Promise<PortalSessionDetailResponse | null>;
   lookupBySupportCode(code: string): Promise<SupportCodeLookupResult>;
+  /** Admin-only: read the audit log (403 for viewers). */
+  listAudit(opts?: {
+    limit?: number;
+    cursor?: string;
+  }): Promise<AdminResult<PortalAuditPage>>;
+  /** Admin-only: read effective retention settings (403 for viewers). */
+  getRetentionSettings(): Promise<AdminResult<PortalRetentionSettings>>;
+  /** Admin-only: update retention windows (403 viewer, 400 invalid). */
+  updateRetentionSettings(
+    body: Partial<PortalRetentionWindows>
+  ): Promise<AdminResult<PortalRetentionUpdateResult>>;
+  /** Admin-only: run an on-demand purge (403 for viewers). */
+  runPurge(): Promise<AdminResult<PortalPurgeResult>>;
+  /** Admin-only: delete a session and its events/replay (403 viewer, 404 unknown). */
+  deleteSession(id: string): Promise<AdminResult<PortalSessionDeleteResult>>;
+  /**
+   * Whether this deployment's portal token carries the admin scope. Used to
+   * decide whether to render admin-only controls (e.g. delete-session) — the
+   * server still enforces the scope on every mutation regardless. Probes a
+   * cheap read-only admin endpoint; on a transport error we fail closed
+   * (return false) so the control is hidden rather than shown-then-403.
+   */
+  isAdmin(): Promise<boolean>;
 }
 
 export class IngestApiError extends Error {
@@ -146,6 +239,60 @@ export function createIngestApiClient(
       );
     }
     return (await response.json()) as T;
+  }
+
+  /**
+   * Issue an authenticated request and classify the result for the admin-gated
+   * governance surfaces. Maps the upstream status into an `AdminResult` so the
+   * portal can distinguish a viewer (403) from a missing target (404) from a
+   * validation error (400) without each caller re-parsing status codes.
+   */
+  async function adminRequest<T>(
+    method: "GET" | "PUT" | "POST" | "DELETE",
+    path: string,
+    body?: unknown
+  ): Promise<AdminResult<T>> {
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          ...(body !== undefined
+            ? { "Content-Type": "application/json" }
+            : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch {
+      throw new IngestApiError(
+        `network error contacting ingest API at ${baseUrl}`,
+        0,
+        baseUrl
+      );
+    }
+    if (response.status === 403) return { status: "forbidden" };
+    if (response.status === 404) return { status: "notFound" };
+    if (response.status === 400) {
+      let message = "Invalid request.";
+      try {
+        const err = (await response.json()) as { message?: unknown };
+        if (typeof err.message === "string") message = err.message;
+      } catch {
+        // keep default message
+      }
+      return { status: "invalid", message };
+    }
+    if (!response.ok) {
+      throw new IngestApiError(
+        `ingest API responded ${response.status} for ${path}`,
+        response.status,
+        baseUrl
+      );
+    }
+    return { status: "ok", data: (await response.json()) as T };
   }
 
   return {
@@ -213,6 +360,56 @@ export function createIngestApiClient(
         session: PortalSupportCodeLookupSession;
       };
       return { status: "ok", session: body.session };
+    },
+    async listAudit(opts = {}) {
+      const params = new URLSearchParams();
+      params.set("limit", String(opts.limit ?? 50));
+      if (opts.cursor) params.set("cursor", opts.cursor);
+      return adminRequest<PortalAuditPage>(
+        "GET",
+        `/api/v1/portal/audit?${params.toString()}`
+      );
+    },
+    async getRetentionSettings() {
+      return adminRequest<PortalRetentionSettings>(
+        "GET",
+        `/api/v1/portal/settings/retention`
+      );
+    },
+    async updateRetentionSettings(body) {
+      return adminRequest<PortalRetentionUpdateResult>(
+        "PUT",
+        `/api/v1/portal/settings/retention`,
+        body
+      );
+    },
+    async runPurge() {
+      const result = await adminRequest<{ purged: PortalPurgeResult }>(
+        "POST",
+        `/api/v1/portal/retention/purge`
+      );
+      if (result.status !== "ok") return result;
+      return { status: "ok", data: result.data.purged };
+    },
+    async deleteSession(id) {
+      const encoded = encodeURIComponent(id);
+      const result = await adminRequest<{ deleted: PortalSessionDeleteResult }>(
+        "DELETE",
+        `/api/v1/portal/sessions/${encoded}`
+      );
+      if (result.status !== "ok") return result;
+      return { status: "ok", data: result.data.deleted };
+    },
+    async isAdmin() {
+      try {
+        const result = await adminRequest<unknown>(
+          "GET",
+          `/api/v1/portal/settings/retention`
+        );
+        return result.status === "ok";
+      } catch {
+        return false;
+      }
     },
   };
 }

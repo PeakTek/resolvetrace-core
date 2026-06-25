@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { ClipboardList, Play } from "lucide-react";
+import { ClipboardList, Play, Settings } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/sessions", label: "Sessions", icon: Play },
   { href: "/audit", label: "Audit log", icon: ClipboardList },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function Sidebar() {

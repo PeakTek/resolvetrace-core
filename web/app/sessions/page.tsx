@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { SupportCodeLookup } from "@/components/support-code-lookup";
+import { DeletedToast } from "@/components/deleted-toast";
 import {
   createIngestApiClient,
   IngestApiError,
@@ -26,8 +27,12 @@ async function loadSessions(): Promise<LoadResult> {
   }
 }
 
-export default async function SessionsPage() {
-  const result = await loadSessions();
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ deleted?: string }>;
+}) {
+  const [result, sp] = await Promise.all([loadSessions(), searchParams]);
 
   return (
     <Shell>
@@ -38,6 +43,8 @@ export default async function SessionsPage() {
             Recorded browser sessions captured by the ResolveTrace SDK.
           </p>
         </header>
+
+        {sp.deleted ? <DeletedToast /> : null}
 
         <Card className="space-y-2 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
