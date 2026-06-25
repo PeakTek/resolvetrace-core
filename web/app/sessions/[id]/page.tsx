@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { SessionTimeline } from "@/components/session-timeline";
+import { SupportCodeBadge } from "@/components/support-code-badge";
 import {
   createIngestApiClient,
   IngestApiError,
@@ -126,6 +127,9 @@ export default async function SessionDetailPage({
           <p className="font-mono text-sm text-neutral-600">
             {session.sessionId}
           </p>
+          {session.supportCode ? (
+            <SupportCodeBadge code={session.supportCode} />
+          ) : null}
           <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-4">
             <div>
               <dt className="text-xs uppercase tracking-wide text-neutral-500">

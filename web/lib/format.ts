@@ -22,3 +22,14 @@ export function formatRelative(iso: string, now: Date = new Date()): string {
   if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
   return then.toLocaleString();
 }
+
+/**
+ * Format a canonical 8-char support code for display as two dash-separated
+ * groups of four (e.g. "ABCD-1234"), which is easier to read aloud and copy.
+ * Non-canonical lengths are returned unchanged so we never mangle unexpected
+ * values.
+ */
+export function formatSupportCode(code: string): string {
+  if (code.length !== 8) return code;
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}

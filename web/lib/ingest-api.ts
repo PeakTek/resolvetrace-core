@@ -6,6 +6,7 @@
 
 export interface PortalSessionListItem {
   sessionId: string;
+  supportCode: string | null;
   startedAt: string;
   endedAt: string | null;
   eventCount: number;
@@ -20,6 +21,7 @@ export interface PortalSessionListResponse {
 
 export interface PortalSessionDetail {
   sessionId: string;
+  supportCode: string | null;
   startedAt: string;
   endedAt: string | null;
   endedReason: string | null;
@@ -56,6 +58,32 @@ export interface PortalSessionDetailResponse {
   eventsNextCursor: string | null;
 }
 
+/**
+ * Shape returned by the `by-support-code` lookup endpoint. A trimmed session
+ * summary — enough to route the operator to the session-detail page.
+ */
+export interface PortalSupportCodeLookupSession {
+  sessionId: string;
+  supportCode: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  endedReason: string | null;
+  appVersion: string | null;
+  releaseChannel: string | null;
+  userAnonId: string | null;
+  eventCount: number;
+}
+
+/**
+ * Result of a support-code lookup. The ingest endpoint distinguishes a
+ * malformed code (400) from an unknown-but-well-formed code (404); we surface
+ * both so the UI can show the right message.
+ */
+export type SupportCodeLookupResult =
+  | { status: "ok"; session: PortalSupportCodeLookupSession }
+  | { status: "invalid" }
+  | { status: "notFound" };
+
 export interface IngestApiClient {
   readonly baseUrl: string;
   listSessions(opts?: {
@@ -63,6 +91,7 @@ export interface IngestApiClient {
     cursor?: string;
   }): Promise<PortalSessionListResponse>;
   getSession(id: string): Promise<PortalSessionDetailResponse | null>;
+  lookupBySupportCode(code: string): Promise<SupportCodeLookupResult>;
 }
 
 export class IngestApiError extends Error {
@@ -147,6 +176,43 @@ export function createIngestApiClient(
         return null;
       }
       return result;
+    },
+    async lookupBySupportCode(code) {
+      // The ingest endpoint normalizes leniently (case, dashes/spaces,
+      // I/L->1, O->0) and validates server-side; we pass the raw code
+      // through so a single normalization rule lives on the server.
+      const encoded = encodeURIComponent(code);
+      const path = `/api/v1/portal/sessions/by-support-code/${encoded}`;
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${path}`, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        });
+      } catch {
+        throw new IngestApiError(
+          `network error contacting ingest API at ${baseUrl}`,
+          0,
+          baseUrl
+        );
+      }
+      if (response.status === 400) return { status: "invalid" };
+      if (response.status === 404) return { status: "notFound" };
+      if (!response.ok) {
+        throw new IngestApiError(
+          `ingest API responded ${response.status} for ${path}`,
+          response.status,
+          baseUrl
+        );
+      }
+      const body = (await response.json()) as {
+        session: PortalSupportCodeLookupSession;
+      };
+      return { status: "ok", session: body.session };
     },
   };
 }

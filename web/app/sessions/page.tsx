@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
+import { SupportCodeLookup } from "@/components/support-code-lookup";
 import {
   createIngestApiClient,
   IngestApiError,
   type PortalSessionListResponse,
 } from "@/lib/ingest-api";
-import { formatRelative } from "@/lib/format";
+import { formatRelative, formatSupportCode } from "@/lib/format";
 
 type LoadResult =
   | { status: "ok"; data: PortalSessionListResponse }
@@ -38,6 +39,16 @@ export default async function SessionsPage() {
           </p>
         </header>
 
+        <Card className="space-y-2 p-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            Find a session by support code
+          </h2>
+          <p className="text-sm text-neutral-600">
+            Paste the code a user gave you to jump straight to their session.
+          </p>
+          <SupportCodeLookup />
+        </Card>
+
         {result.status === "error" ? (
           <Card className="p-6">
             <p className="text-sm text-neutral-900">
@@ -63,6 +74,7 @@ export default async function SessionsPage() {
               <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
                 <tr>
                   <th className="px-4 py-2 font-medium">Session</th>
+                  <th className="px-4 py-2 font-medium">Support code</th>
                   <th className="px-4 py-2 font-medium">Started</th>
                   <th className="px-4 py-2 font-medium">Ended</th>
                   <th className="px-4 py-2 font-medium">Events</th>
@@ -82,6 +94,9 @@ export default async function SessionsPage() {
                       >
                         {s.sessionId}
                       </Link>
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs text-neutral-700">
+                      {s.supportCode ? formatSupportCode(s.supportCode) : "—"}
                     </td>
                     <td
                       className="px-4 py-2 text-neutral-700"
