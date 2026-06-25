@@ -180,6 +180,14 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           type: e.type,
           capturedAt: e.capturedAt,
           attributes: e.attributes,
+          // Canonical-taxonomy fields (migration 002) needed by the
+          // session-detail timeline to render frustration / error / perf
+          // breadcrumbs with severity colouring and duration / status badges.
+          schemaVersion: e.schemaVersion,
+          context: e.context,
+          severity: e.severity,
+          durationMs: e.durationMs,
+          httpStatus: e.httpStatus,
         })),
         eventsNextCursor: eventsPage.nextCursor ?? null,
       };

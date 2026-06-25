@@ -36,6 +36,18 @@ export interface PortalSessionEvent {
   type: string;
   capturedAt: string;
   attributes: Record<string, unknown> | null;
+  /**
+   * Canonical-taxonomy fields (persisted by migration 002, projected by the
+   * portal query). Optional so older ingest builds that don't surface them
+   * still parse. Auto-captured events (rage/dead clicks, JS/API/resource
+   * errors, perf) carry `severity` + `durationMs`/`httpStatus`; legacy events
+   * leave them null.
+   */
+  schemaVersion?: number | null;
+  context?: Record<string, unknown> | null;
+  severity?: "info" | "warn" | "error" | null;
+  durationMs?: number | null;
+  httpStatus?: number | null;
 }
 
 export interface PortalSessionDetailResponse {

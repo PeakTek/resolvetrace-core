@@ -258,7 +258,11 @@ export class PostgresSessionSink implements SessionSink {
     // Compose the persisted client blob. If identify is present, embed it so
     // queries can see the latest traits without an extra column.
     let clientPayload: string | null = null;
-    if (record.client !== undefined || identifyProvided) {
+    if (
+      record.client !== undefined ||
+      identifyProvided ||
+      record.attributes !== undefined
+    ) {
       const base =
         record.client !== undefined && record.client !== null
           ? (record.client as Record<string, unknown>)
@@ -266,6 +270,9 @@ export class PostgresSessionSink implements SessionSink {
       const composed: Record<string, unknown> = { ...base };
       if (identifyProvided) {
         composed.identify = record.identify;
+      }
+      if (record.attributes !== undefined) {
+        composed.attributes = record.attributes;
       }
       clientPayload = JSON.stringify(composed);
     }
@@ -350,6 +357,11 @@ interface EventRow extends QueryResultRow {
   captured_at: Date | string;
   attributes: unknown;
   clock_skew_detected: boolean;
+  schema_version: number | null;
+  context: unknown;
+  severity: string | null;
+  duration_ms: number | null;
+  http_status: number | null;
 }
 
 function toIso(v: Date | string): string {
@@ -374,6 +386,10 @@ function mapSession(row: SessionRow): SessionRecord {
   };
 }
 
+function isSeverity(v: unknown): v is "info" | "warn" | "error" {
+  return v === "info" || v === "warn" || v === "error";
+}
+
 function mapEvent(row: EventRow): EventRecord {
   return {
     eventId: row.event_id,
@@ -385,6 +401,12 @@ function mapEvent(row: EventRow): EventRecord {
         ? null
         : (row.attributes as Record<string, unknown>),
     clockSkewDetected: row.clock_skew_detected,
+    schemaVersion: row.schema_version ?? null,
+    context:
+      row.context == null ? null : (row.context as Record<string, unknown>),
+    severity: isSeverity(row.severity) ? row.severity : null,
+    durationMs: row.duration_ms ?? null,
+    httpStatus: row.http_status ?? null,
   };
 }
 
@@ -508,7 +530,8 @@ export class PostgresEventRepository implements EventRepository {
     const limitParam = `$${params.length}`;
 
     const res = await this.pool.query<EventRow>(
-      `SELECT event_id, session_id, type, captured_at, attributes, clock_skew_detected
+      `SELECT event_id, session_id, type, captured_at, attributes, clock_skew_detected,
+              schema_version, context, severity, duration_ms, http_status
          FROM events
         WHERE tenant_id = $1
           AND session_id = $2${whereCursor}

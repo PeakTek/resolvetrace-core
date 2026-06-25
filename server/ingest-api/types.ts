@@ -90,6 +90,19 @@ export interface EventRecord {
   capturedAt: string;
   attributes: Record<string, unknown> | null;
   clockSkewDetected: boolean;
+  /**
+   * Canonical-taxonomy fields persisted by migration 002. All nullable —
+   * legacy rows and producers that omit them read back as `null`. Surfaced to
+   * the portal session-detail view so auto-captured frustration / error /
+   * perf events can be rendered (type-aware rows, severity colouring,
+   * duration / http-status badges) without a second round-trip.
+   */
+  schemaVersion: number | null;
+  /** Per-event global context (release/locale/route/device/…) or null. */
+  context: Record<string, unknown> | null;
+  severity: "info" | "warn" | "error" | null;
+  durationMs: number | null;
+  httpStatus: number | null;
 }
 
 /**
@@ -158,6 +171,11 @@ export interface SessionStartRecord {
   releaseChannel?: string;
   client?: unknown;
   userAnonId?: string;
+  /**
+   * Free-form, non-PII session attributes (e.g. `page_url`, `viewport`) sent
+   * by the browser SDK on session start and extended via `sessionAttributes`.
+   */
+  attributes?: Record<string, unknown>;
   /**
    * Latest known identity for this session. When present, the session row is
    * upserted with these fields so a re-issued start (e.g. after login)

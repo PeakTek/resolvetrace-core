@@ -1,12 +1,21 @@
 import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
+import { SessionTimeline } from "@/components/session-timeline";
 import {
   createIngestApiClient,
   IngestApiError,
   type PortalSessionDetailResponse,
 } from "@/lib/ingest-api";
 import { formatRelative } from "@/lib/format";
+
+/**
+ * The SDK caps auto-captured events per session (default 200). When the
+ * returned event count is at/over that ceiling we surface a "capped" note on
+ * the timeline. There is no first-class signal for this yet, so we infer it
+ * from the count; this is intentionally conservative.
+ */
+const AUTO_CAPTURE_CAP = 200;
 
 type LoadResult =
   | { status: "ok"; data: PortalSessionDetailResponse }
@@ -24,15 +33,6 @@ async function loadSession(id: string): Promise<LoadResult> {
       return { status: "error", baseUrl: err.baseUrl };
     }
     return { status: "error", baseUrl: client.baseUrl };
-  }
-}
-
-function formatAttributes(attrs: Record<string, unknown> | null): string {
-  if (!attrs) return "—";
-  try {
-    return JSON.stringify(attrs, null, 2);
-  } catch {
-    return "[unserializable]";
   }
 }
 
@@ -188,45 +188,13 @@ export default async function SessionDetailPage({
         <Card className="overflow-hidden">
           <div className="border-b border-neutral-100 px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-              Events ({session.eventCount})
+              Timeline ({session.eventCount})
             </h2>
           </div>
-          {events.length === 0 ? (
-            <div className="p-6 text-center text-sm text-neutral-600">
-              No events recorded for this session yet.
-            </div>
-          ) : (
-            <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Type</th>
-                  <th className="px-4 py-2 font-medium">Captured at</th>
-                  <th className="px-4 py-2 font-medium">Attributes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr
-                    key={e.eventId}
-                    className="border-t border-neutral-100 align-top"
-                  >
-                    <td className="px-4 py-2 font-mono text-xs">{e.type}</td>
-                    <td
-                      className="px-4 py-2 text-neutral-700"
-                      title={e.capturedAt}
-                    >
-                      {formatRelative(e.capturedAt)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <pre className="whitespace-pre-wrap break-all font-mono text-xs text-neutral-700">
-                        {formatAttributes(e.attributes)}
-                      </pre>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <SessionTimeline
+            events={events}
+            capped={events.length >= AUTO_CAPTURE_CAP}
+          />
         </Card>
       </div>
     </Shell>
