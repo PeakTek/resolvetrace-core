@@ -24,9 +24,11 @@ import {
   SessionRequiredError,
   SessionSink,
   SessionStartRecord,
+  SessionStartResult,
   SessionUnknownError,
   ValidatedEvent,
 } from "./types.js";
+import { generateSupportCode } from "./support-code.js";
 
 const { Pool: PoolCtor } = pg;
 
@@ -240,10 +242,61 @@ export class PostgresEventSink implements EventSink {
 export class PostgresSessionSink implements SessionSink {
   constructor(private readonly pool: PgPool) {}
 
+  /**
+   * Postgres unique-violation SQLSTATE — surfaced when two concurrent starts
+   * race the same generated code onto `uq_sessions_support_code`.
+   */
+  private static readonly PG_UNIQUE_VIOLATION = "23505";
+
+  /**
+   * Mint-or-return the support code for the session row, idempotently.
+   *
+   * The session row already exists (the upsert above guarantees it). This
+   * sets `support_code` only when it is currently NULL — a repeat start with
+   * the same `sessionId` keeps the original code — and returns the effective
+   * code via `RETURNING`. On the rare per-tenant collision (another session
+   * already holds the generated code) the unique index raises 23505 and we
+   * retry with a fresh code, bounded.
+   */
+  private async mintSupportCode(
+    tenantId: string,
+    sessionId: string
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const candidate = generateSupportCode();
+      try {
+        const res = await this.pool.query<{ support_code: string }>(
+          `UPDATE sessions
+              SET support_code = COALESCE(support_code, $3),
+                  updated_at   = now()
+            WHERE tenant_id = $1 AND session_id = $2
+          RETURNING support_code`,
+          [tenantId, sessionId, candidate]
+        );
+        const code = res.rows[0]?.support_code;
+        if (code) return code;
+        // No row matched — should not happen since the upsert ran first.
+        throw new Error(
+          `session row missing for ${tenantId}:${sessionId} during support-code mint`
+        );
+      } catch (err) {
+        const code = (err as { code?: string } | null)?.code;
+        if (code === PostgresSessionSink.PG_UNIQUE_VIOLATION) {
+          // Generated code already taken for this tenant — try again.
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(
+      `Exhausted support-code generation attempts for ${tenantId}:${sessionId}`
+    );
+  }
+
   async recordStart(
     tenantId: string,
     record: SessionStartRecord
-  ): Promise<void> {
+  ): Promise<SessionStartResult> {
     // When the start carries an `identify` block, it wins outright over any
     // previously stored identity for this session. The SDK only re-issues
     // start with identify when it has new identity to project (e.g. a login
@@ -306,6 +359,12 @@ export class PostgresSessionSink implements SessionSink {
         identifyProvided,
       ]
     );
+
+    const supportCode = await this.mintSupportCode(
+      tenantId,
+      record.sessionId
+    );
+    return { supportCode };
   }
 
   async recordEnd(tenantId: string, record: SessionEndRecord): Promise<void> {
@@ -348,6 +407,7 @@ interface SessionRow extends QueryResultRow {
   replay_chunk_count: number | null;
   client: unknown;
   event_count: string | number;
+  support_code: string | null;
 }
 
 interface EventRow extends QueryResultRow {
@@ -383,6 +443,7 @@ function mapSession(row: SessionRow): SessionRecord {
         : row.event_count,
     replayChunkCount: row.replay_chunk_count,
     client: row.client ?? null,
+    supportCode: row.support_code ?? null,
   };
 }
 
@@ -443,6 +504,7 @@ const SESSION_LIST_COLUMNS = `
   s.user_anon_id,
   s.replay_chunk_count,
   s.client,
+  s.support_code,
   (SELECT COUNT(*) FROM events e
     WHERE e.tenant_id = s.tenant_id
       AND e.session_id = s.session_id) AS event_count
@@ -501,6 +563,21 @@ export class PostgresSessionRepository implements SessionRepository {
         WHERE s.tenant_id = $1
           AND s.session_id = $2`,
       [tenantId, sessionId]
+    );
+    const row = res.rows[0];
+    return row ? mapSession(row) : null;
+  }
+
+  async findBySupportCode(
+    tenantId: string,
+    supportCode: string
+  ): Promise<SessionRecord | null> {
+    const res = await this.pool.query<SessionRow>(
+      `SELECT ${SESSION_LIST_COLUMNS}
+         FROM sessions s
+        WHERE s.tenant_id = $1
+          AND s.support_code = $2`,
+      [tenantId, supportCode]
     );
     const row = res.rows[0];
     return row ? mapSession(row) : null;

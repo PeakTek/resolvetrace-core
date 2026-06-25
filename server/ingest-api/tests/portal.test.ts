@@ -11,6 +11,7 @@ import type { EventRecord, SessionRecord } from "../types.js";
 function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
     sessionId: VALID_ULID_SESSION,
+    supportCode: "ABCD1234",
     startedAt: "2026-04-20T12:30:00.000Z",
     endedAt: null,
     endedReason: null,
@@ -60,6 +61,7 @@ describe("GET /api/v1/portal/sessions", () => {
     expect(body.sessions).toHaveLength(1);
     expect(body.sessions[0]).toEqual({
       sessionId: VALID_ULID_SESSION,
+      supportCode: "ABCD1234",
       startedAt: "2026-04-20T12:30:00.000Z",
       endedAt: null,
       eventCount: 4,
@@ -281,6 +283,138 @@ describe("GET /api/v1/portal/sessions/:sessionId", () => {
     const res = await app.inject({
       method: "GET",
       url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}`,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("GET /api/v1/portal/sessions/by-support-code/:code", () => {
+  let close: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    if (close) await close();
+    close = undefined;
+  });
+
+  it("resolves a session by its support code", async () => {
+    const sessionRepository = new MockSessionRepository([
+      makeSession({ supportCode: "ABCD1234" }),
+    ]);
+    const { app } = await buildTestApp({ sessionRepository });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/ABCD1234",
+      headers: { authorization: AUTH_HEADER },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["x-portal-api-version"]).toBe("1");
+    const body = res.json();
+    expect(body.session.sessionId).toBe(VALID_ULID_SESSION);
+    expect(body.session.supportCode).toBe("ABCD1234");
+    expect(sessionRepository.lastFindBySupportCode?.supportCode).toBe(
+      "ABCD1234"
+    );
+  });
+
+  it("normalizes case + dashes/spaces and Crockford I/L/O before lookup", async () => {
+    const sessionRepository = new MockSessionRepository([
+      makeSession({ supportCode: "ABCD1234" }),
+    ]);
+    const { app } = await buildTestApp({ sessionRepository });
+    close = () => app.close();
+
+    // Lowercase, dashed; "abcd-1234" -> "ABCD1234".
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/abcd-1234",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sessionRepository.lastFindBySupportCode?.supportCode).toBe(
+      "ABCD1234"
+    );
+
+    // Lenient Crockford look-alikes: I/L -> 1, O -> 0.
+    const sessionRepository2 = new MockSessionRepository([
+      makeSession({ supportCode: "1B0D1234" }),
+    ]);
+    const { app: app2 } = await buildTestApp({
+      sessionRepository: sessionRepository2,
+    });
+    const prevClose = close;
+    close = async () => {
+      await prevClose?.();
+      await app2.close();
+    };
+    const res2 = await app2.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/IBOD1234",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res2.statusCode).toBe(200);
+    expect(sessionRepository2.lastFindBySupportCode?.supportCode).toBe(
+      "1B0D1234"
+    );
+  });
+
+  it("returns 404 for an unknown (but well-formed) code", async () => {
+    const sessionRepository = new MockSessionRepository([]);
+    const { app } = await buildTestApp({ sessionRepository });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/ZZZZ9999",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe("not_found");
+  });
+
+  it("rejects a malformed code with 400 before hitting the repository", async () => {
+    const sessionRepository = new MockSessionRepository([]);
+    const { app } = await buildTestApp({ sessionRepository });
+    close = () => app.close();
+
+    // "ABC" is too short; "U" is excluded from Crockford.
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/ABC",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+    expect(sessionRepository.lastFindBySupportCode).toBeUndefined();
+  });
+
+  it("is tenant-scoped — forwards the principal's tenant to the repository", async () => {
+    const resolver = new MockResolver({ tenantId: "tenant-aaa" });
+    const sessionRepository = new MockSessionRepository([
+      makeSession({ supportCode: "ABCD1234" }),
+    ]);
+    const { app } = await buildTestApp({ resolver, sessionRepository });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/ABCD1234",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sessionRepository.lastFindBySupportCode?.tenantId).toBe(
+      "tenant-aaa"
+    );
+  });
+
+  it("returns 401 when no bearer token is present", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/sessions/by-support-code/ABCD1234",
     });
     expect(res.statusCode).toBe(401);
   });

@@ -101,6 +101,9 @@ export class MockSessionRepository implements SessionRepository {
     opts: { limit: number; cursor?: string };
   } | undefined;
   public lastGet: { tenantId: string; sessionId: string } | undefined;
+  public lastFindBySupportCode:
+    | { tenantId: string; supportCode: string }
+    | undefined;
 
   constructor(
     private readonly sessions: SessionRecord[] = [],
@@ -124,6 +127,16 @@ export class MockSessionRepository implements SessionRepository {
     this.lastGet = { tenantId, sessionId };
     return (
       this.sessions.find((s) => s.sessionId === sessionId) ?? null
+    );
+  }
+
+  async findBySupportCode(
+    tenantId: string,
+    supportCode: string
+  ): Promise<SessionRecord | null> {
+    this.lastFindBySupportCode = { tenantId, supportCode };
+    return (
+      this.sessions.find((s) => s.supportCode === supportCode) ?? null
     );
   }
 }

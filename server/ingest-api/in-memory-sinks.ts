@@ -17,8 +17,10 @@ import {
   SessionRepository,
   SessionSink,
   SessionStartRecord,
+  SessionStartResult,
   ValidatedEvent,
 } from "./types.js";
+import { generateSupportCode } from "./support-code.js";
 
 export class InMemoryEventSink implements EventSink {
   private readonly queue: Array<{
@@ -47,16 +49,42 @@ export class InMemoryEventSink implements EventSink {
 export class InMemorySessionSink implements SessionSink {
   private readonly startRecords = new Map<string, SessionStartRecord>();
   private readonly endRecords = new Map<string, SessionEndRecord>();
+  /** `${tenantId}:${sessionId}` -> minted support code. */
+  private readonly supportCodes = new Map<string, string>();
+  /** `${tenantId}:${supportCode}` -> sessionId, for collision checks + lookup. */
+  private readonly supportCodeIndex = new Map<string, string>();
+
+  /**
+   * Mint a support code unique within the tenant, idempotent per session: a
+   * repeat start with the same `(tenantId, sessionId)` returns the SAME code.
+   */
+  private mintSupportCode(tenantId: string, sessionId: string): string {
+    const key = `${tenantId}:${sessionId}`;
+    const existing = this.supportCodes.get(key);
+    if (existing) return existing;
+    // Bounded retry on the (astronomically rare) per-tenant collision.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = generateSupportCode();
+      const indexKey = `${tenantId}:${code}`;
+      if (!this.supportCodeIndex.has(indexKey)) {
+        this.supportCodes.set(key, code);
+        this.supportCodeIndex.set(indexKey, sessionId);
+        return code;
+      }
+    }
+    throw new Error("Exhausted support-code generation attempts");
+  }
 
   async recordStart(
     tenantId: string,
     record: SessionStartRecord
-  ): Promise<void> {
+  ): Promise<SessionStartResult> {
     const key = `${tenantId}:${record.sessionId}`;
+    const supportCode = this.mintSupportCode(tenantId, record.sessionId);
     const existing = this.startRecords.get(key);
     if (!existing) {
       this.startRecords.set(key, { ...record });
-      return;
+      return { supportCode };
     }
     // Idempotent upsert. `started_at` settles to the earliest seen value
     // (LEAST), so a repeat start with a later timestamp doesn't move the
@@ -76,6 +104,7 @@ export class InMemorySessionSink implements SessionSink {
       merged.identify = existing.identify;
     }
     this.startRecords.set(key, merged);
+    return { supportCode };
   }
 
   async recordEnd(
@@ -97,6 +126,11 @@ export class InMemorySessionSink implements SessionSink {
   getEnd(tenantId: string, sessionId: string): SessionEndRecord | undefined {
     return this.endRecords.get(`${tenantId}:${sessionId}`);
   }
+
+  /** Visible for tests — the support code minted for this session, if any. */
+  getSupportCode(tenantId: string, sessionId: string): string | undefined {
+    return this.supportCodes.get(`${tenantId}:${sessionId}`);
+  }
 }
 
 /**
@@ -109,6 +143,9 @@ export class EmptySessionRepository implements SessionRepository {
     return { sessions: [] };
   }
   async get(): Promise<SessionRecord | null> {
+    return null;
+  }
+  async findBySupportCode(): Promise<SessionRecord | null> {
     return null;
   }
 }

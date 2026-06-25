@@ -13,6 +13,7 @@
 
 import { FastifyPluginAsync } from "fastify";
 import { EventRepository, SessionRepository } from "../types.js";
+import { isValidSupportCode, normalizeSupportCode } from "../support-code.js";
 
 export interface PortalRoutesOptions {
   sessionRepository: SessionRepository;
@@ -108,6 +109,7 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
       return {
         sessions: page.sessions.map((s) => ({
           sessionId: s.sessionId,
+          supportCode: s.supportCode,
           startedAt: s.startedAt,
           endedAt: s.endedAt,
           eventCount: s.eventCount,
@@ -115,6 +117,61 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           releaseChannel: s.releaseChannel,
         })),
         nextCursor: page.nextCursor ?? null,
+      };
+    }
+  );
+
+  // Resolve a session by its per-session support code. Lenient on input
+  // (case-insensitive, dashes/spaces stripped, Crockford I/L->1 and O->0)
+  // so support staff can type a code as the user reads it aloud. Tenant-
+  // scoped. The distinct extra path segment keeps this from colliding with
+  // the `/:sessionId` route below.
+  fastify.get(
+    "/api/v1/portal/sessions/by-support-code/:code",
+    {
+      config: { rateLimit: opts.rateLimitOptions },
+    },
+    async (request, reply) => {
+      const principal = request.principal;
+      if (!principal) {
+        reply.code(401);
+        return { error: "unauthorized", message: "Missing principal." };
+      }
+
+      const { code } = request.params as { code: string };
+      const normalized = normalizeSupportCode(code ?? "");
+      if (!isValidSupportCode(normalized)) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message: "`code` is not a valid support code.",
+        };
+      }
+
+      const session = await opts.sessionRepository.findBySupportCode(
+        principal.config.tenantId,
+        normalized
+      );
+      if (!session) {
+        reply.code(404);
+        return {
+          error: "not_found",
+          message: `No session for support code ${normalized}`,
+        };
+      }
+
+      return {
+        session: {
+          sessionId: session.sessionId,
+          supportCode: session.supportCode,
+          startedAt: session.startedAt,
+          endedAt: session.endedAt,
+          endedReason: session.endedReason,
+          appVersion: session.appVersion,
+          releaseChannel: session.releaseChannel,
+          userAnonId: session.userAnonId,
+          eventCount: session.eventCount,
+        },
       };
     }
   );
@@ -165,6 +222,7 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
       return {
         session: {
           sessionId: session.sessionId,
+          supportCode: session.supportCode,
           startedAt: session.startedAt,
           endedAt: session.endedAt,
           endedReason: session.endedReason,

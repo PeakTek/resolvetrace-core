@@ -48,20 +48,28 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
         return { error: "unauthorized" };
       }
 
-      await opts.sessionSink.recordStart(principal.config.tenantId, {
-        sessionId: body.sessionId,
-        startedAt: body.startedAt,
-        appVersion: body.appVersion,
-        releaseChannel: body.releaseChannel,
-        client: body.client,
-        userAnonId: body.userAnonId,
-        identify: body.identify,
-      });
+      const { supportCode } = await opts.sessionSink.recordStart(
+        principal.config.tenantId,
+        {
+          sessionId: body.sessionId,
+          startedAt: body.startedAt,
+          appVersion: body.appVersion,
+          releaseChannel: body.releaseChannel,
+          client: body.client,
+          userAnonId: body.userAnonId,
+          identify: body.identify,
+        }
+      );
 
       reply.code(201);
+      // `supportCode` is required by the contract's SessionStartResponse
+      // (Crockford base32, 8 chars). The server mints it; the SDK surfaces it
+      // for "Support code: XXXXXXXX" display and the portal resolves it back
+      // to this session.
       return {
         sessionId: body.sessionId,
         acceptedAt: new Date().toISOString(),
+        supportCode,
       };
     }
   );

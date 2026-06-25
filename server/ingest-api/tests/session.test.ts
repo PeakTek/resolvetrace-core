@@ -34,6 +34,71 @@ describe("POST /v1/session/start", () => {
     ).toBeDefined();
   });
 
+  it("mints a valid 8-char Crockford support code on start", async () => {
+    const { app, sessionSink } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart(),
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    // Mirrors the contract's SessionStartResponse pattern.
+    expect(body.supportCode).toMatch(/^[0-9A-HJKMNP-TV-Z]{8}$/);
+    // Persisted on the session row (returned == stored).
+    expect(
+      sessionSink.getSupportCode("oss-test-tenant", VALID_ULID_SESSION)
+    ).toBe(body.supportCode);
+  });
+
+  it("mints distinct codes across distinct sessions", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const codes = new Set<string>();
+    for (const sessionId of [
+      "01HXA0C4YFGJXQZ2P3R4T5V6W0",
+      "01HXA0C4YFGJXQZ2P3R4T5V6W1",
+      "01HXA0C4YFGJXQZ2P3R4T5V6W2",
+    ]) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/session/start",
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
+        payload: validSessionStart({ sessionId }),
+      });
+      codes.add(res.json().supportCode);
+    }
+    expect(codes.size).toBe(3);
+  });
+
+  it("repeat start with the same sessionId returns the SAME support code", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart({ startedAt: "2026-04-20T12:00:00.000Z" }),
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart({ startedAt: "2026-04-20T13:00:00.000Z" }),
+    });
+
+    expect(first.json().supportCode).toBe(second.json().supportCode);
+  });
+
   it("rejects missing required fields with 400", async () => {
     const { app } = await buildTestApp();
     close = () => app.close();

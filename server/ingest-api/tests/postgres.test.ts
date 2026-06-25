@@ -204,9 +204,16 @@ describe("PostgresEventSink", () => {
 
 describe("PostgresSessionSink", () => {
   it("recordStart upserts all fields with LEAST started_at", async () => {
-    const pool = new FakePool();
+    const pool = new FakePool((text) => {
+      // The support-code mint runs after the upsert; echo a canned code so
+      // recordStart resolves.
+      if (/UPDATE sessions/.test(text) && /support_code/.test(text)) {
+        return ok([{ support_code: "ABCD1234" }]);
+      }
+      return undefined;
+    });
     const sink = new PostgresSessionSink(pool);
-    await sink.recordStart("tenant-1", {
+    const result = await sink.recordStart("tenant-1", {
       sessionId: "sess-1",
       startedAt: "2026-04-20T12:00:00.000Z",
       appVersion: "1.0.0",
@@ -214,10 +221,59 @@ describe("PostgresSessionSink", () => {
       userAnonId: "anon-1",
       client: { ua: "test" },
     });
+    expect(result.supportCode).toBe("ABCD1234");
     const q = pool.queries[0];
     expect(q).toBeDefined();
     expect(q!.text).toMatch(/INSERT INTO sessions/);
     expect(q!.text).toMatch(/LEAST\(/);
+  });
+
+  it("recordStart mints a support code via COALESCE and returns it", async () => {
+    const pool = new FakePool((text) => {
+      if (/UPDATE sessions/.test(text) && /support_code/.test(text)) {
+        // COALESCE(support_code, $3) — first start has no prior code, so the
+        // candidate ($3) is written. The fake echoes a canned canonical code.
+        return ok([{ support_code: "ABCD1234" }]);
+      }
+      return undefined;
+    });
+    const sink = new PostgresSessionSink(pool);
+    const result = await sink.recordStart("tenant-1", {
+      sessionId: "sess-1",
+      startedAt: "2026-04-20T12:00:00.000Z",
+    });
+    expect(result.supportCode).toBe("ABCD1234");
+
+    const mintSql = pool.queries.map((q) => q.text).find((s) =>
+      /UPDATE sessions/.test(s) && /support_code/.test(s)
+    )!;
+    // Idempotent: keeps any existing code, only fills NULL.
+    expect(mintSql).toMatch(/COALESCE\(support_code/);
+    expect(mintSql).toMatch(/RETURNING support_code/);
+  });
+
+  it("recordStart retries generation on a unique-index collision", async () => {
+    let attempts = 0;
+    const pool = new FakePool((text) => {
+      if (/UPDATE sessions/.test(text) && /support_code/.test(text)) {
+        attempts++;
+        if (attempts === 1) {
+          // Simulate the partial unique index rejecting a duplicate code.
+          const err = new Error("duplicate key") as Error & { code: string };
+          err.code = "23505";
+          throw err;
+        }
+        return ok([{ support_code: "ZZZZ9999" }]);
+      }
+      return undefined;
+    });
+    const sink = new PostgresSessionSink(pool);
+    const result = await sink.recordStart("tenant-1", {
+      sessionId: "sess-2",
+      startedAt: "2026-04-20T12:00:00.000Z",
+    });
+    expect(attempts).toBe(2);
+    expect(result.supportCode).toBe("ZZZZ9999");
   });
 
   it("recordEnd upserts a minimal row when no session exists", async () => {
@@ -331,6 +387,45 @@ describe("PostgresSessionRepository", () => {
     });
     const repo = new PostgresSessionRepository(pool);
     const result = await repo.get("tenant-1", "missing");
+    expect(result).toBeNull();
+  });
+
+  it("findBySupportCode filters on tenant_id + support_code", async () => {
+    const pool = new FakePool((text) => {
+      if (/FROM sessions/.test(text) && /support_code = \$2/.test(text)) {
+        return ok([
+          {
+            session_id: "s-7",
+            started_at: "2026-04-20T12:00:00.000Z",
+            ended_at: null,
+            ended_reason: null,
+            app_version: null,
+            release_channel: null,
+            user_anon_id: null,
+            replay_chunk_count: null,
+            client: null,
+            event_count: "0",
+            support_code: "ABCD1234",
+          },
+        ]);
+      }
+      return undefined;
+    });
+    const repo = new PostgresSessionRepository(pool);
+    const result = await repo.findBySupportCode("tenant-1", "ABCD1234");
+    expect(result?.sessionId).toBe("s-7");
+    expect(result?.supportCode).toBe("ABCD1234");
+    const q = pool.queries[0]!;
+    expect(q.params).toEqual(["tenant-1", "ABCD1234"]);
+  });
+
+  it("findBySupportCode returns null when no row matches", async () => {
+    const pool = new FakePool((text) => {
+      if (/FROM sessions/.test(text)) return ok([]);
+      return undefined;
+    });
+    const repo = new PostgresSessionRepository(pool);
+    const result = await repo.findBySupportCode("tenant-1", "NOPE0000");
     expect(result).toBeNull();
   });
 });

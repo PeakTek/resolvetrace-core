@@ -21,11 +21,23 @@ export interface EventSink {
 
 /** Pluggable session record sink. In-memory default for tests; Postgres in production. */
 export interface SessionSink {
+  /**
+   * Record (or upsert) the session-start row and return the per-session
+   * support code. The code is minted server-side on first start and is
+   * idempotent per `(tenantId, sessionId)`: a repeat start with the same
+   * `sessionId` returns the SAME code rather than minting a new one.
+   */
   recordStart(
     tenantId: string,
     record: SessionStartRecord
-  ): Promise<void>;
+  ): Promise<SessionStartResult>;
   recordEnd(tenantId: string, record: SessionEndRecord): Promise<void>;
+}
+
+/** Result of `SessionSink.recordStart`. */
+export interface SessionStartResult {
+  /** The per-session support code (8-char Crockford base32, uppercase). */
+  supportCode: string;
 }
 
 /**
@@ -45,6 +57,17 @@ export interface SessionRepository {
   ): Promise<{ sessions: SessionRecord[]; nextCursor?: string }>;
 
   get(tenantId: string, sessionId: string): Promise<SessionRecord | null>;
+
+  /**
+   * Resolve a session by its per-session support code. `supportCode` is the
+   * normalized canonical value (uppercase, 8-char Crockford); callers must
+   * normalize lenient user input first. Tenant-scoped; returns `null` when no
+   * session for the tenant carries that code.
+   */
+  findBySupportCode(
+    tenantId: string,
+    supportCode: string
+  ): Promise<SessionRecord | null>;
 }
 
 /**
@@ -67,6 +90,11 @@ export interface EventRepository {
 /** Read model returned by `SessionRepository`. */
 export interface SessionRecord {
   sessionId: string;
+  /**
+   * Per-session support code (8-char Crockford base32, uppercase canonical),
+   * or null for legacy rows minted before migration 003.
+   */
+  supportCode: string | null;
   /** ISO 8601. */
   startedAt: string;
   /** ISO 8601 or null if the session is still open. */
