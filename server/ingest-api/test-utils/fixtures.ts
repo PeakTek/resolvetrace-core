@@ -12,6 +12,7 @@ export const VALID_SHA256 =
 
 export function validEvent(overrides: Record<string, unknown> = {}) {
   return {
+    schemaVersion: 1,
     eventId: VALID_ULID_A,
     type: "page_view",
     capturedAt: "2026-04-20T12:34:56.789Z",

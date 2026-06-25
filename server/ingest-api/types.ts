@@ -92,11 +92,49 @@ export interface EventRecord {
   clockSkewDetected: boolean;
 }
 
+/**
+ * Per-event global context. Optional on the envelope; mirrors the contract's
+ * `EventContext` (`events.json#/definitions/EventContext`). When present,
+ * releaseVersion/locale/market/diagnosticsLevel are required. Stored verbatim
+ * as JSON on the event row for later session-detail rendering.
+ */
+export interface EventContext {
+  releaseVersion: string;
+  locale: string;
+  market: string;
+  diagnosticsLevel: "essential" | "standard" | "assisted_support";
+  routeName?: string;
+  routeType?: string;
+  componentId?: string;
+  componentType?: string;
+  browserFamily?: string;
+  browserVersion?: string;
+  osFamily?: string;
+  deviceType?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  featureFlags?: Record<string, unknown>;
+  experimentVariant?: string;
+  networkState?: string;
+  pageUrl?: string;
+  supportCode?: string;
+}
+
 export interface ValidatedEvent {
+  /**
+   * Major version of the shared event schema this envelope conforms to.
+   * Producers stamp the current major (1); the events route rejects
+   * unsupported majors before persistence (version-negotiation contract).
+   */
+  schemaVersion: number;
   eventId: string;
   sessionId?: string;
   type: string;
   capturedAt: string;
+  context?: EventContext;
+  severity?: "info" | "warn" | "error";
+  durationMs?: number;
+  httpStatus?: number;
   attributes?: Record<string, unknown>;
   scrubber: {
     version: string;

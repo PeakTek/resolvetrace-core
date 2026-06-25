@@ -17,6 +17,7 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
+import { ValidationError } from "../plugins/body-validate.js";
 import {
   EventSink,
   IdempotencyStore,
@@ -26,6 +27,15 @@ import {
 } from "../types.js";
 
 const DEDUP_WINDOW_SECONDS = 24 * 60 * 60; // 24 h, ADR-0011
+
+/**
+ * Highest event-schema major this server understands. The wire schema only
+ * pins `schemaVersion >= 1`; rejecting *unsupported* majors is a consumer
+ * responsibility (doc 18 `backend_must_reject_unsupported_versions`), enforced
+ * here so a producer stamping a future major fails loudly rather than having
+ * its newer-shaped envelope silently misread.
+ */
+const SUPPORTED_SCHEMA_MAJOR = 1;
 
 export interface EventsRoutesOptions {
   eventSink: EventSink;
@@ -49,6 +59,30 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (
       const body = request.validateBody("EventBatchRequest") as {
         events: ValidatedEvent[];
       };
+
+      // Version negotiation: the wire schema guarantees schemaVersion is a
+      // present integer >= 1, but only major 1 is understood today. Reject any
+      // other major with a clear validation error (400) so a future-major
+      // producer is told to upgrade the server rather than silently dropped.
+      const unsupported = body.events.find(
+        (e) => e.schemaVersion !== SUPPORTED_SCHEMA_MAJOR
+      );
+      if (unsupported) {
+        throw new ValidationError(
+          `Unsupported event schemaVersion ${unsupported.schemaVersion}; this server supports major ${SUPPORTED_SCHEMA_MAJOR}.`,
+          [
+            {
+              instancePath: "/events/schemaVersion",
+              message: `unsupported schema major (server supports ${SUPPORTED_SCHEMA_MAJOR})`,
+              params: {
+                received: unsupported.schemaVersion,
+                supported: SUPPORTED_SCHEMA_MAJOR,
+              },
+            },
+          ]
+        );
+      }
+
       const principal = request.principal;
       if (!principal) {
         // Auth plugin runs before us; this is a belt-and-braces guard.

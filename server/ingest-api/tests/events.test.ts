@@ -131,6 +131,114 @@ describe("POST /v1/events", () => {
     expect(eventSink.size()).toBe(1);
   });
 
+  it("accepts the canonical taxonomy + context/severity/durationMs/httpStatus", async () => {
+    const { app, eventSink } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validBatch([
+        validEvent({
+          eventId: VALID_ULID_A,
+          type: "error.api",
+          severity: "error",
+          httpStatus: 503,
+          durationMs: 1284,
+          context: {
+            releaseVersion: "web@2026.06.1",
+            locale: "en-CA",
+            market: "ca-retail",
+            diagnosticsLevel: "standard",
+            routeName: "checkout",
+            viewportWidth: 1440,
+            viewportHeight: 900,
+          },
+        }),
+        validEvent({ eventId: VALID_ULID_B, type: "checkout.completed" }),
+      ]),
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json().accepted).toBe(2);
+    // size() counts enqueue calls (batches), not events: one POST -> one batch.
+    expect(eventSink.size()).toBe(1);
+    expect(eventSink.drain()[0].events).toHaveLength(2);
+  });
+
+  it("rejects a reserved-namespace shadow type with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      // ux.* is a reserved namespace; ux.totally_made_up is not canonical.
+      payload: validBatch([validEvent({ type: "ux.totally_made_up" })]),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("rejects an unsupported schemaVersion major with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validBatch([validEvent({ schemaVersion: 2 })]),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("rejects a missing schemaVersion with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const evt = validEvent();
+    delete (evt as Record<string, unknown>).schemaVersion;
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: { events: [evt] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("rejects context missing a required sub-field with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validBatch([
+        validEvent({
+          // diagnosticsLevel omitted — required when context present.
+          context: {
+            releaseVersion: "web@2026.06.1",
+            locale: "en-CA",
+            market: "ca-retail",
+          },
+        }),
+      ]),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
   it("handles a mixed batch (some fresh, some duplicate)", async () => {
     const { app, eventSink } = await buildTestApp();
     close = () => app.close();

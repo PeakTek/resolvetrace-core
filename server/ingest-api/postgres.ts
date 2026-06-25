@@ -189,8 +189,9 @@ export class PostgresEventSink implements EventSink {
         await client.query(
           `INSERT INTO events (
              tenant_id, event_id, session_id, type, captured_at,
-             attributes, scrubber, sdk, clock_skew_detected
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             attributes, scrubber, sdk, clock_skew_detected,
+             schema_version, context, severity, duration_ms, http_status
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
            ON CONFLICT (tenant_id, event_id) DO NOTHING`,
           [
             tenantId,
@@ -202,6 +203,11 @@ export class PostgresEventSink implements EventSink {
             JSON.stringify(evt.scrubber),
             JSON.stringify(evt.sdk),
             evt.clockSkewDetected ?? false,
+            evt.schemaVersion,
+            evt.context ? JSON.stringify(evt.context) : null,
+            evt.severity ?? null,
+            evt.durationMs ?? null,
+            evt.httpStatus ?? null,
           ]
         );
         // In strict mode the session row is guaranteed to exist (we

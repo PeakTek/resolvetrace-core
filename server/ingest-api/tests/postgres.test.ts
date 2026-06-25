@@ -135,6 +135,7 @@ describe("runMigrations", () => {
 
 function makeEvent(overrides: Partial<ValidatedEvent> = {}): ValidatedEvent {
   return {
+    schemaVersion: 1,
     eventId: "evt-1",
     sessionId: "sess-1",
     type: "page_view",
