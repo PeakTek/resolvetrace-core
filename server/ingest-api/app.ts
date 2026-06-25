@@ -26,6 +26,7 @@ import { sessionRoutes } from "./routes/session.js";
 import { healthRoutes } from "./routes/health.js";
 import { portalRoutes } from "./routes/portal.js";
 import { portalAuthRoutes } from "./routes/portal-auth.js";
+import { retentionRoutes } from "./routes/retention.js";
 
 export interface BuildAppOptions extends IngestApiDependencies {
   /** Pino log level. Defaults to env / "info". */
@@ -110,7 +111,7 @@ export async function buildApp(
   const origins = opts.corsOrigins ?? [];
   await fastify.register(cors, {
     origin: origins.length === 0 ? true : origins,
-    methods: ["POST", "GET", "OPTIONS"],
+    methods: ["POST", "GET", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Authorization",
       "Content-Type",
@@ -173,6 +174,15 @@ export async function buildApp(
     eventRepository: opts.eventRepository,
     auditSink: opts.auditSink,
     auditRepository: opts.auditRepository,
+    rateLimitOptions: perClassLimits.session,
+  });
+  // Retention settings + purge + targeted-deletion surface (admin-only).
+  await fastify.register(retentionRoutes, {
+    purgeStore: opts.purgeStore,
+    storage: opts.storage,
+    settingsRepository: opts.settingsRepository,
+    auditSink: opts.auditSink,
+    retentionConfig: opts.retentionConfig,
     rateLimitOptions: perClassLimits.session,
   });
   // The login route is only meaningful when an auth provider is wired.

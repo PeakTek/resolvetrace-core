@@ -11,7 +11,9 @@ import {
   EmptySessionRepository,
   InMemoryAuditSink,
   InMemoryEventSink,
+  InMemoryPurgeStore,
   InMemorySessionSink,
+  InMemorySettingsRepository,
 } from "../in-memory-sinks.js";
 import { InMemoryIdempotencyStore } from "../plugins/idempotency.js";
 import { MockResolver, MockStorage } from "./mocks.js";
@@ -20,12 +22,18 @@ import {
   AuditSink,
   EventRepository,
   EventSink,
+  PurgeStore,
   RateLimitBudget,
   RateLimitClass,
   ReadinessCheck,
   SessionRepository,
   SessionSink,
+  SettingsRepository,
 } from "../types.js";
+import {
+  loadRetentionConfig,
+  type RetentionConfig,
+} from "../retention-config.js";
 import type { AuthProvider } from "../../auth/index.js";
 
 export interface TestAppOverrides<
@@ -50,6 +58,12 @@ export interface TestAppOverrides<
    */
   auditSink?: AuditSink & AuditRepository;
   auditRepository?: AuditRepository;
+  /** Settings store. Defaults to a fresh `InMemorySettingsRepository`. */
+  settingsRepository?: SettingsRepository;
+  /** Purge store. Defaults to a fresh `InMemoryPurgeStore`. */
+  purgeStore?: PurgeStore;
+  /** Retention config. Defaults to env-loaded (all "keep forever" in tests). */
+  retentionConfig?: RetentionConfig;
   authProvider?: AuthProvider;
   idempotencyStore?: InMemoryIdempotencyStore;
   readinessChecks?: ReadinessCheck[];
@@ -72,6 +86,14 @@ export async function buildTestApp<
     overrides.eventRepository ?? new EmptyEventRepository();
   const auditSink = overrides.auditSink ?? new InMemoryAuditSink();
   const auditRepository = overrides.auditRepository ?? auditSink;
+  const settingsRepository =
+    overrides.settingsRepository ?? new InMemorySettingsRepository();
+  const purgeStore = overrides.purgeStore ?? new InMemoryPurgeStore();
+  // Default to a config loaded from an empty env: every window is "keep
+  // forever" (0), so a purge in an un-configured test is a no-op unless the
+  // test passes its own config or seeds + overrides windows.
+  const retentionConfig =
+    overrides.retentionConfig ?? loadRetentionConfig({} as NodeJS.ProcessEnv);
   const idempotencyStore =
     overrides.idempotencyStore ?? new InMemoryIdempotencyStore();
 
@@ -84,6 +106,9 @@ export async function buildTestApp<
     eventRepository,
     auditSink,
     auditRepository,
+    settingsRepository,
+    purgeStore,
+    retentionConfig,
     authProvider: overrides.authProvider,
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
@@ -101,6 +126,9 @@ export async function buildTestApp<
     eventRepository,
     auditSink,
     auditRepository,
+    settingsRepository,
+    purgeStore,
+    retentionConfig,
     idempotencyStore,
   };
 }

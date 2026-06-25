@@ -16,12 +16,14 @@ import {
   EventRecord,
   EventRepository,
   EventSink,
+  PurgeStore,
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
   SessionSink,
   SessionStartRecord,
   SessionStartResult,
+  SettingsRepository,
   ValidatedEvent,
 } from "./types.js";
 import { generateSupportCode } from "./support-code.js";
@@ -224,6 +226,182 @@ export class InMemoryAuditSink implements AuditSink, AuditRepository {
   /** Visible for tests — all rows for a tenant in insertion order. */
   all(tenantId: string): AuditRecord[] {
     return [...this.rowsFor(tenantId)];
+  }
+}
+
+/**
+ * In-memory key/value settings store. Backs tests and the DATABASE_URL-less
+ * smoke path (where retention overrides are non-durable but the surface still
+ * works).
+ */
+export class InMemorySettingsRepository implements SettingsRepository {
+  private readonly byTenant = new Map<string, Map<string, string>>();
+
+  async getAll(tenantId: string): Promise<Record<string, string>> {
+    const m = this.byTenant.get(tenantId);
+    return m ? Object.fromEntries(m) : {};
+  }
+
+  async set(tenantId: string, key: string, value: string): Promise<void> {
+    let m = this.byTenant.get(tenantId);
+    if (!m) {
+      m = new Map();
+      this.byTenant.set(tenantId, m);
+    }
+    m.set(key, value);
+  }
+}
+
+/** A seedable in-memory session row for the purge store. */
+export interface PurgeSessionSeed {
+  sessionId: string;
+  /** ISO 8601 session start time — compared against the purge cutoff. */
+  startedAt: string;
+  replayChunkCount?: number;
+}
+
+/** A seedable in-memory event row for the purge store. */
+export interface PurgeEventSeed {
+  eventId: string;
+  sessionId: string | null;
+  /** ISO 8601 capture time — compared against the events cutoff. */
+  capturedAt: string;
+}
+
+/**
+ * In-memory `PurgeStore` for tests + the DATABASE_URL-less smoke path. Seed it
+ * with session/event rows and assert which survive a purge. Tenant-scoped to
+ * match the Postgres implementation. The smoke fallback seeds nothing, so a
+ * purge there is a well-formed no-op.
+ */
+export class InMemoryPurgeStore implements PurgeStore {
+  private sessions = new Map<string, PurgeSessionSeed[]>();
+  private events = new Map<string, PurgeEventSeed[]>();
+
+  /** Seed sessions for a tenant (replaces any existing seed). */
+  seedSessions(tenantId: string, rows: PurgeSessionSeed[]): void {
+    this.sessions.set(tenantId, rows.map((r) => ({ ...r })));
+  }
+
+  /** Seed events for a tenant (replaces any existing seed). */
+  seedEvents(tenantId: string, rows: PurgeEventSeed[]): void {
+    this.events.set(tenantId, rows.map((r) => ({ ...r })));
+  }
+
+  /** Visible for tests — surviving sessions for a tenant. */
+  sessionsFor(tenantId: string): PurgeSessionSeed[] {
+    return [...(this.sessions.get(tenantId) ?? [])];
+  }
+
+  /** Visible for tests — surviving events for a tenant. */
+  eventsFor(tenantId: string): PurgeEventSeed[] {
+    return [...(this.events.get(tenantId) ?? [])];
+  }
+
+  async purgeEventsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    _batchSize: number
+  ): Promise<number> {
+    const rows = this.events.get(tenantId) ?? [];
+    const cut = cutoff.getTime();
+    const kept = rows.filter((e) => new Date(e.capturedAt).getTime() >= cut);
+    const deleted = rows.length - kept.length;
+    this.events.set(tenantId, kept);
+    return deleted;
+  }
+
+  async listSessionsWithReplayOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    limit: number
+  ): Promise<Array<{ sessionId: string; replayChunkCount: number }>> {
+    const rows = this.sessions.get(tenantId) ?? [];
+    const cut = cutoff.getTime();
+    return rows
+      .filter(
+        (s) =>
+          new Date(s.startedAt).getTime() < cut &&
+          (s.replayChunkCount ?? 0) > 0
+      )
+      .slice(0, limit)
+      .map((s) => ({
+        sessionId: s.sessionId,
+        replayChunkCount: s.replayChunkCount ?? 0,
+      }));
+  }
+
+  async clearReplayChunkCount(
+    tenantId: string,
+    sessionId: string
+  ): Promise<void> {
+    const rows = this.sessions.get(tenantId) ?? [];
+    for (const s of rows) {
+      if (s.sessionId === sessionId) s.replayChunkCount = 0;
+    }
+  }
+
+  async purgeSessionsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    _batchSize: number
+  ): Promise<{
+    sessionsDeleted: number;
+    eventsDeleted: number;
+    replayChunks: Array<{ sessionId: string; replayChunkCount: number }>;
+  }> {
+    const rows = this.sessions.get(tenantId) ?? [];
+    const cut = cutoff.getTime();
+    const doomed = rows.filter((s) => new Date(s.startedAt).getTime() < cut);
+    const kept = rows.filter((s) => new Date(s.startedAt).getTime() >= cut);
+    this.sessions.set(tenantId, kept);
+
+    const doomedIds = new Set(doomed.map((s) => s.sessionId));
+    const evRows = this.events.get(tenantId) ?? [];
+    const evKept = evRows.filter(
+      (e) => e.sessionId == null || !doomedIds.has(e.sessionId)
+    );
+    const eventsDeleted = evRows.length - evKept.length;
+    this.events.set(tenantId, evKept);
+
+    return {
+      sessionsDeleted: doomed.length,
+      eventsDeleted,
+      replayChunks: doomed
+        .filter((s) => (s.replayChunkCount ?? 0) > 0)
+        .map((s) => ({
+          sessionId: s.sessionId,
+          replayChunkCount: s.replayChunkCount ?? 0,
+        })),
+    };
+  }
+
+  async deleteSession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<{
+    found: boolean;
+    eventsDeleted: number;
+    replayChunkCount: number;
+  }> {
+    const rows = this.sessions.get(tenantId) ?? [];
+    const target = rows.find((s) => s.sessionId === sessionId);
+    if (!target) {
+      return { found: false, eventsDeleted: 0, replayChunkCount: 0 };
+    }
+    this.sessions.set(
+      tenantId,
+      rows.filter((s) => s.sessionId !== sessionId)
+    );
+    const evRows = this.events.get(tenantId) ?? [];
+    const evKept = evRows.filter((e) => e.sessionId !== sessionId);
+    const eventsDeleted = evRows.length - evKept.length;
+    this.events.set(tenantId, evKept);
+    return {
+      found: true,
+      eventsDeleted,
+      replayChunkCount: target.replayChunkCount ?? 0,
+    };
   }
 }
 

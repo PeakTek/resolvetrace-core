@@ -15,8 +15,10 @@ import {
   PostgresAuditSink,
   PostgresEventRepository,
   PostgresEventSink,
+  PostgresPurgeStore,
   PostgresSessionRepository,
   PostgresSessionSink,
+  PostgresSettingsRepository,
   runMigrations,
   type PgClient,
   type PgPool,
@@ -539,5 +541,114 @@ describe("PostgresAuditRepository", () => {
     await repo.list("tenant-1", { limit: 50, cursor });
     const sql = pool.queries[0]!.text;
     expect(sql).toMatch(/\(occurred_at, id\) < \(\$2, \$3\)/);
+  });
+});
+
+// --- Settings + purge store -------------------------------------------
+
+function okCount<R extends QueryResultRow>(
+  rows: R[],
+  rowCount: number
+): QueryResult<R> {
+  return { rows, rowCount, command: "", oid: 0, fields: [] };
+}
+
+describe("PostgresSettingsRepository", () => {
+  it("reads all settings for a tenant as a key->value map", async () => {
+    const pool = new FakePool((text) =>
+      /SELECT key, value FROM settings/.test(text)
+        ? ok([
+            { key: "retention.events_days", value: "7" },
+            { key: "retention.replay_days", value: "3" },
+          ])
+        : undefined
+    );
+    const repo = new PostgresSettingsRepository(pool);
+    const all = await repo.getAll("t1");
+    expect(all).toEqual({
+      "retention.events_days": "7",
+      "retention.replay_days": "3",
+    });
+  });
+
+  it("upserts a setting via ON CONFLICT DO UPDATE", async () => {
+    const pool = new FakePool(() => undefined);
+    const repo = new PostgresSettingsRepository(pool);
+    await repo.set("t1", "retention.events_days", "14");
+    const q = pool.queries[0]!;
+    expect(q.text).toMatch(/INSERT INTO settings/);
+    expect(q.text).toMatch(/ON CONFLICT \(tenant_id, key\) DO UPDATE/);
+    expect(q.params).toEqual(["t1", "retention.events_days", "14"]);
+  });
+});
+
+describe("PostgresPurgeStore", () => {
+  it("purgeEventsOlderThan loops bounded batches until under the batch size", async () => {
+    let call = 0;
+    const pool = new FakePool((text) => {
+      if (!/DELETE FROM events/.test(text)) return undefined;
+      call += 1;
+      // First full batch (3), then a short final batch (1) ends the loop.
+      return call === 1 ? okCount([], 3) : okCount([], 1);
+    });
+    const store = new PostgresPurgeStore(pool);
+    const deleted = await store.purgeEventsOlderThan(
+      "t1",
+      new Date("2026-01-01T00:00:00Z"),
+      3
+    );
+    expect(deleted).toBe(4);
+    expect(call).toBe(2);
+    // Bounded-batch via ctid subselect with LIMIT.
+    expect(pool.queries[0]!.text).toMatch(/ctid IN/);
+    expect(pool.queries[0]!.text).toMatch(/LIMIT \$3/);
+  });
+
+  it("deleteSession cascades events then session and returns the replay count", async () => {
+    const pool = new FakePool((text) => {
+      if (/SELECT session_id, replay_chunk_count/.test(text)) {
+        return ok([{ session_id: "s1", replay_chunk_count: 2 }]);
+      }
+      if (/DELETE FROM events/.test(text)) return okCount([], 5);
+      return undefined;
+    });
+    const store = new PostgresPurgeStore(pool);
+    const res = await store.deleteSession("t1", "s1");
+    expect(res).toEqual({ found: true, eventsDeleted: 5, replayChunkCount: 2 });
+    // Cascade order: BEGIN, SELECT ... FOR UPDATE, DELETE events, DELETE session, COMMIT.
+    const ops = pool.clientQueries.map((q) =>
+      q.text.trim().split(/\s+/).slice(0, 2).join(" ").toUpperCase()
+    );
+    expect(ops).toContain("DELETE FROM"); // events + session
+    expect(pool.clientQueries.some((q) => /DELETE FROM events/.test(q.text))).toBe(true);
+    expect(pool.clientQueries.some((q) => /DELETE FROM sessions/.test(q.text))).toBe(true);
+  });
+
+  it("deleteSession returns found=false for an unknown session (idempotent)", async () => {
+    const pool = new FakePool((text) =>
+      /SELECT session_id, replay_chunk_count/.test(text) ? ok([]) : undefined
+    );
+    const store = new PostgresPurgeStore(pool);
+    const res = await store.deleteSession("t1", "missing");
+    expect(res).toEqual({ found: false, eventsDeleted: 0, replayChunkCount: 0 });
+    // No DELETE issued when the session doesn't exist.
+    expect(pool.clientQueries.some((q) => /DELETE/.test(q.text))).toBe(false);
+  });
+
+  it("listSessionsWithReplayOlderThan filters on count>0 and the cutoff", async () => {
+    const pool = new FakePool((text) =>
+      /FROM sessions/.test(text)
+        ? ok([{ session_id: "s1", replay_chunk_count: 4 }])
+        : undefined
+    );
+    const store = new PostgresPurgeStore(pool);
+    const rows = await store.listSessionsWithReplayOlderThan(
+      "t1",
+      new Date("2026-01-01T00:00:00Z"),
+      100
+    );
+    expect(rows).toEqual([{ sessionId: "s1", replayChunkCount: 4 }]);
+    expect(pool.queries[0]!.text).toMatch(/replay_chunk_count > 0/);
+    expect(pool.queries[0]!.text).toMatch(/started_at < \$2/);
   });
 });

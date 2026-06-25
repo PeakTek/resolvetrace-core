@@ -19,7 +19,9 @@ import {
   EmptySessionRepository,
   InMemoryAuditSink,
   InMemoryEventSink,
+  InMemoryPurgeStore,
   InMemorySessionSink,
+  InMemorySettingsRepository,
 } from "./in-memory-sinks.js";
 import { createIdempotencyStore } from "./plugins/idempotency.js";
 import {
@@ -28,8 +30,10 @@ import {
   PostgresAuditSink,
   PostgresEventRepository,
   PostgresEventSink,
+  PostgresPurgeStore,
   PostgresSessionRepository,
   PostgresSessionSink,
+  PostgresSettingsRepository,
   runMigrations,
 } from "./postgres.js";
 import {
@@ -37,10 +41,14 @@ import {
   AuditSink,
   EventRepository,
   EventSink,
+  PurgeStore,
   ReadinessCheck,
   SessionRepository,
   SessionSink,
+  SettingsRepository,
 } from "./types.js";
+import { loadRetentionConfig } from "./retention-config.js";
+import { RetentionScheduler } from "./retention-scheduler.js";
 import type { AuthProvider } from "../auth/index.js";
 
 function parseBoolEnv(value: string | undefined): boolean {
@@ -65,6 +73,9 @@ async function main(): Promise<void> {
   const resolver = createResolver();
   const storage = createStorage();
   const idempotencyStore = createIdempotencyStore();
+  // Retention config (env defaults). Parsing throws on a malformed value so a
+  // misconfig fails fast rather than silently keeping data forever.
+  const retentionConfig = loadRetentionConfig();
 
   // --- Persistence wiring ---
   // With DATABASE_URL set, we use Postgres-backed sinks + repositories and
@@ -77,6 +88,8 @@ async function main(): Promise<void> {
   let eventRepository: EventRepository;
   let auditSink: AuditSink;
   let auditRepository: AuditRepository;
+  let settingsRepository: SettingsRepository;
+  let purgeStore: PurgeStore;
   let pgPool: Pool | undefined;
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -108,6 +121,8 @@ async function main(): Promise<void> {
     eventRepository = new PostgresEventRepository(pgPool);
     auditSink = new PostgresAuditSink(pgPool);
     auditRepository = new PostgresAuditRepository(pgPool);
+    settingsRepository = new PostgresSettingsRepository(pgPool);
+    purgeStore = new PostgresPurgeStore(pgPool);
     const pool = pgPool;
     readinessChecks.push({
       name: "postgres",
@@ -134,6 +149,10 @@ async function main(): Promise<void> {
     const inMemoryAudit = new InMemoryAuditSink();
     auditSink = inMemoryAudit;
     auditRepository = inMemoryAudit;
+    // Non-durable settings + an empty purge store: the retention surface still
+    // responds, there's just no persisted data to act on in this smoke mode.
+    settingsRepository = new InMemorySettingsRepository();
+    purgeStore = new InMemoryPurgeStore();
   }
 
   // Secrets and auth providers are wired at boot when their config is
@@ -163,6 +182,9 @@ async function main(): Promise<void> {
     eventRepository,
     auditSink,
     auditRepository,
+    settingsRepository,
+    purgeStore,
+    retentionConfig,
     authProvider,
     idempotencyStore,
     readinessChecks,
@@ -170,9 +192,32 @@ async function main(): Promise<void> {
     logLevel,
   });
 
+  // Scheduled retention purge. Only meaningful against a real data store, and
+  // only when enabled in config. The single-tenant OSS server purges its one
+  // configured tenant; the actor on scheduled runs is `system`.
+  let scheduler: RetentionScheduler | undefined;
+  if (pgPool && retentionConfig.purgeEnabled) {
+    const tenantConfig = await resolver.resolveByIngestHost(
+      process.env.INGEST_HOST ?? ""
+    );
+    scheduler = new RetentionScheduler({
+      purgeStore,
+      storage,
+      settingsRepository,
+      auditSink,
+      retentionConfig,
+      tenantId: tenantConfig.tenantId,
+      logger: app.log,
+    });
+    scheduler.start();
+  } else if (pgPool) {
+    app.log.info("retention purge scheduler disabled by config");
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "shutdown signal received; closing server");
     try {
+      scheduler?.stop();
       await app.close();
       if (pgPool) {
         await pgPool.end();

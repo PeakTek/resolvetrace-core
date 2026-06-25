@@ -9,6 +9,7 @@
 import { ObjectStorage } from "../storage/index.js";
 import { TenantConfigResolver } from "../tenant-resolver/index.js";
 import type { AuthProvider } from "../auth/index.js";
+import type { RetentionConfig } from "./retention-config.js";
 
 /** Pluggable event sink. In-memory default for tests; Postgres in production. */
 export interface EventSink {
@@ -314,6 +315,79 @@ export interface AuditRepository {
   ): Promise<{ entries: AuditRecord[]; nextCursor?: string }>;
 }
 
+/**
+ * Read/write access to the per-tenant key/value settings store (migration
+ * 005). Used to persist admin overrides of the retention day-windows over the
+ * environment defaults. The in-memory implementation backs tests and the
+ * DATABASE_URL-less smoke path; the Postgres implementation hits `settings`.
+ */
+export interface SettingsRepository {
+  /** Return all settings for a tenant as a key -> value map. */
+  getAll(tenantId: string): Promise<Record<string, string>>;
+  /** Upsert one setting. */
+  set(tenantId: string, key: string, value: string): Promise<void>;
+}
+
+/**
+ * The storage-and-row surface the purge runner + targeted-deletion path need.
+ * Deliberately narrow (only what those operations require) so it can be
+ * implemented over Postgres in production and a fake in tests. All methods are
+ * tenant-scoped and use bounded batches where they delete in a loop.
+ */
+export interface PurgeStore {
+  /**
+   * Delete up to `batchSize` `events` rows older than `cutoff` for the tenant,
+   * looping until none remain. Returns the total number of rows deleted.
+   * Skipped entirely by the caller when the events window is "keep forever".
+   */
+  purgeEventsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    batchSize: number
+  ): Promise<number>;
+
+  /**
+   * Find sessions started before `cutoff` that still carry replay chunks, so
+   * the caller can delete their storage objects. Returns `(sessionId,
+   * replayChunkCount)` pairs, bounded to `limit` per call (caller loops).
+   */
+  listSessionsWithReplayOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    limit: number
+  ): Promise<Array<{ sessionId: string; replayChunkCount: number }>>;
+
+  /** Zero out `replay_chunk_count` for a session after its objects are gone. */
+  clearReplayChunkCount(tenantId: string, sessionId: string): Promise<void>;
+
+  /**
+   * Delete up to `batchSize` `sessions` rows started before `cutoff` (and the
+   * events that belong to them), looping until none remain. Returns the
+   * sessions deleted and the per-session replay-chunk info for those sessions
+   * so the caller can purge their storage objects too.
+   */
+  purgeSessionsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    batchSize: number
+  ): Promise<{
+    sessionsDeleted: number;
+    eventsDeleted: number;
+    replayChunks: Array<{ sessionId: string; replayChunkCount: number }>;
+  }>;
+
+  /**
+   * Hard-delete one session and cascade: its events, then the session row.
+   * Returns the events deleted and the session's prior `replay_chunk_count`
+   * (0 when none / unknown) so the caller can delete storage objects, plus a
+   * `found` flag for idempotency (false => no such session for the tenant).
+   */
+  deleteSession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<{ found: boolean; eventsDeleted: number; replayChunkCount: number }>;
+}
+
 /** Readiness probe. Implementations may probe DB, storage, or other deps. */
 export interface ReadinessCheck {
   /** Short machine-readable name of the dependency being probed. */
@@ -339,6 +413,15 @@ export interface IngestApiDependencies {
   auditSink: AuditSink;
   /** Read-side access to the audit log (admin query endpoint). */
   auditRepository: AuditRepository;
+  /** Read/write key/value settings store (editable retention overrides). */
+  settingsRepository: SettingsRepository;
+  /** Row + storage surface the purge runner and deletion path operate on. */
+  purgeStore: PurgeStore;
+  /**
+   * Resolved retention configuration (env defaults). The portal-resolved
+   * effective windows layer admin overrides from `settingsRepository` on top.
+   */
+  retentionConfig: RetentionConfig;
   /**
    * Optional auth provider backing the portal login endpoint. When absent the
    * login route is not registered (e.g. an ingest-only deployment).

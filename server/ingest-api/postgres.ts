@@ -22,6 +22,7 @@ import {
   EventRecord,
   EventRepository,
   EventSink,
+  PurgeStore,
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
@@ -29,6 +30,7 @@ import {
   SessionSink,
   SessionStartRecord,
   SessionStartResult,
+  SettingsRepository,
   SessionUnknownError,
   ValidatedEvent,
 } from "./types.js";
@@ -727,5 +729,235 @@ export class PostgresAuditRepository implements AuditRepository {
         : undefined;
 
     return nextCursor ? { entries, nextCursor } : { entries };
+  }
+}
+
+// --- Settings ----------------------------------------------------------
+
+/**
+ * Postgres-backed key/value settings store (migration 005). Used to persist
+ * admin overrides of the retention day-windows over the env defaults.
+ */
+export class PostgresSettingsRepository implements SettingsRepository {
+  constructor(private readonly pool: PgPool) {}
+
+  async getAll(tenantId: string): Promise<Record<string, string>> {
+    const res = await this.pool.query<{ key: string; value: string }>(
+      "SELECT key, value FROM settings WHERE tenant_id = $1",
+      [tenantId]
+    );
+    const out: Record<string, string> = {};
+    for (const row of res.rows) out[row.key] = row.value;
+    return out;
+  }
+
+  async set(tenantId: string, key: string, value: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO settings (tenant_id, key, value, updated_at)
+         VALUES ($1, $2, $3, now())
+       ON CONFLICT (tenant_id, key) DO UPDATE
+         SET value = EXCLUDED.value, updated_at = now()`,
+      [tenantId, key, value]
+    );
+  }
+}
+
+// --- Purge store -------------------------------------------------------
+
+interface SessionReplayRow extends QueryResultRow {
+  session_id: string;
+  replay_chunk_count: number | string | null;
+}
+
+function toCount(v: number | string | null | undefined): number {
+  if (v == null) return 0;
+  const n = typeof v === "string" ? parseInt(v, 10) : v;
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Postgres-backed purge + targeted-deletion store. All deletes are
+ * tenant-scoped; the loop-style deletes use a bounded batch (via a
+ * `ctid IN (... LIMIT n)` subselect) so a large purge never locks the table
+ * for an unbounded span. Replay *objects* are not deleted here — the caller
+ * (the purge runner) removes those via the storage adapter from the chunk
+ * info returned alongside the row deletes.
+ */
+export class PostgresPurgeStore implements PurgeStore {
+  constructor(private readonly pool: PgPool) {}
+
+  async purgeEventsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    batchSize: number
+  ): Promise<number> {
+    let total = 0;
+    for (;;) {
+      const res = await this.pool.query(
+        `DELETE FROM events
+          WHERE ctid IN (
+            SELECT ctid FROM events
+             WHERE tenant_id = $1 AND captured_at < $2
+             LIMIT $3
+          )`,
+        [tenantId, cutoff.toISOString(), batchSize]
+      );
+      const n = res.rowCount ?? 0;
+      total += n;
+      if (n < batchSize) break;
+    }
+    return total;
+  }
+
+  async listSessionsWithReplayOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    limit: number
+  ): Promise<Array<{ sessionId: string; replayChunkCount: number }>> {
+    const res = await this.pool.query<SessionReplayRow>(
+      `SELECT session_id, replay_chunk_count
+         FROM sessions
+        WHERE tenant_id = $1
+          AND started_at < $2
+          AND replay_chunk_count IS NOT NULL
+          AND replay_chunk_count > 0
+        ORDER BY started_at ASC
+        LIMIT $3`,
+      [tenantId, cutoff.toISOString(), limit]
+    );
+    return res.rows.map((r) => ({
+      sessionId: r.session_id,
+      replayChunkCount: toCount(r.replay_chunk_count),
+    }));
+  }
+
+  async clearReplayChunkCount(
+    tenantId: string,
+    sessionId: string
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE sessions
+          SET replay_chunk_count = 0, updated_at = now()
+        WHERE tenant_id = $1 AND session_id = $2`,
+      [tenantId, sessionId]
+    );
+  }
+
+  async purgeSessionsOlderThan(
+    tenantId: string,
+    cutoff: Date,
+    batchSize: number
+  ): Promise<{
+    sessionsDeleted: number;
+    eventsDeleted: number;
+    replayChunks: Array<{ sessionId: string; replayChunkCount: number }>;
+  }> {
+    let sessionsDeleted = 0;
+    let eventsDeleted = 0;
+    const replayChunks: Array<{ sessionId: string; replayChunkCount: number }> =
+      [];
+
+    for (;;) {
+      const client = await this.pool.connect();
+      let batchCount = 0;
+      try {
+        await client.query("BEGIN");
+        // Select a bounded batch of aged sessions, locking them so a
+        // concurrent purge can't grab the same rows.
+        const picked = await client.query<SessionReplayRow>(
+          `SELECT session_id, replay_chunk_count
+             FROM sessions
+            WHERE tenant_id = $1 AND started_at < $2
+            ORDER BY started_at ASC
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED`,
+          [tenantId, cutoff.toISOString(), batchSize]
+        );
+        batchCount = picked.rows.length;
+        if (batchCount === 0) {
+          await client.query("COMMIT");
+          break;
+        }
+        const ids = picked.rows.map((r) => r.session_id);
+        // Cascade: delete this batch's events first, then the sessions.
+        const evRes = await client.query(
+          `DELETE FROM events
+            WHERE tenant_id = $1 AND session_id = ANY($2::text[])`,
+          [tenantId, ids]
+        );
+        eventsDeleted += evRes.rowCount ?? 0;
+        const sRes = await client.query(
+          `DELETE FROM sessions
+            WHERE tenant_id = $1 AND session_id = ANY($2::text[])`,
+          [tenantId, ids]
+        );
+        sessionsDeleted += sRes.rowCount ?? 0;
+        for (const r of picked.rows) {
+          const count = toCount(r.replay_chunk_count);
+          if (count > 0) {
+            replayChunks.push({
+              sessionId: r.session_id,
+              replayChunkCount: count,
+            });
+          }
+        }
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      if (batchCount < batchSize) break;
+    }
+
+    return { sessionsDeleted, eventsDeleted, replayChunks };
+  }
+
+  async deleteSession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<{
+    found: boolean;
+    eventsDeleted: number;
+    replayChunkCount: number;
+  }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Lock the session row (if any) so the cascade is consistent.
+      const sel = await client.query<SessionReplayRow>(
+        `SELECT session_id, replay_chunk_count
+           FROM sessions
+          WHERE tenant_id = $1 AND session_id = $2
+          FOR UPDATE`,
+        [tenantId, sessionId]
+      );
+      const row = sel.rows[0];
+      if (!row) {
+        await client.query("COMMIT");
+        return { found: false, eventsDeleted: 0, replayChunkCount: 0 };
+      }
+      const replayChunkCount = toCount(row.replay_chunk_count);
+      const evRes = await client.query(
+        `DELETE FROM events WHERE tenant_id = $1 AND session_id = $2`,
+        [tenantId, sessionId]
+      );
+      await client.query(
+        `DELETE FROM sessions WHERE tenant_id = $1 AND session_id = $2`,
+        [tenantId, sessionId]
+      );
+      await client.query("COMMIT");
+      return {
+        found: true,
+        eventsDeleted: evRes.rowCount ?? 0,
+        replayChunkCount,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 }
