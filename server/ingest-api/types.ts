@@ -8,6 +8,7 @@
 
 import { ObjectStorage } from "../storage/index.js";
 import { TenantConfigResolver } from "../tenant-resolver/index.js";
+import type { AuthProvider } from "../auth/index.js";
 
 /** Pluggable event sink. In-memory default for tests; Postgres in production. */
 export interface EventSink {
@@ -260,6 +261,59 @@ export class SessionRequiredError extends Error {
   }
 }
 
+/**
+ * A single audit record as written by the app and returned by the query
+ * endpoint. `actor` is the authenticated principal (a user id, or a stable
+ * label like `portal-service` for API-key/bearer access — NEVER the secret).
+ * `metadata` is non-PII JSON only (hit/miss flags, counts, etc.).
+ */
+export interface AuditRecordInput {
+  /** Authenticated principal identifier or a stable service label. */
+  actor: string;
+  /** One of the `AuditAction` constants (free-form text at the DB level). */
+  action: string;
+  /** Optional object class the action targeted, e.g. `session`. */
+  targetType?: string | null;
+  /** Optional identifier of the targeted object, e.g. a session id. */
+  targetId?: string | null;
+  /** Non-PII structured context. NEVER raw PII or secrets. */
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Read model returned by `AuditRepository`. */
+export interface AuditRecord {
+  actor: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  /** ISO 8601. */
+  occurredAt: string;
+  metadata: Record<string, unknown> | null;
+}
+
+/**
+ * Append-only sink for audit records. The Postgres implementation INSERTs a
+ * row; the in-memory implementation appends to an array for tests. Callers
+ * must NOT depend on the write succeeding — see `recordAudit`, which wraps a
+ * sink so a failure is logged but never breaks the primary request.
+ */
+export interface AuditSink {
+  append(tenantId: string, record: AuditRecordInput): Promise<void>;
+}
+
+/** Read-side access to the audit log. Consumed by the admin query endpoint. */
+export interface AuditRepository {
+  list(
+    tenantId: string,
+    opts: {
+      /** Page size. Clamped to `[1, 200]` by the implementation. */
+      limit: number;
+      /** Opaque cursor returned by a previous call. */
+      cursor?: string;
+    }
+  ): Promise<{ entries: AuditRecord[]; nextCursor?: string }>;
+}
+
 /** Readiness probe. Implementations may probe DB, storage, or other deps. */
 export interface ReadinessCheck {
   /** Short machine-readable name of the dependency being probed. */
@@ -281,6 +335,15 @@ export interface IngestApiDependencies {
   sessionRepository: SessionRepository;
   /** Read-side access to stored events (portal API). */
   eventRepository: EventRepository;
+  /** Append-only audit sink (governance feature #6). */
+  auditSink: AuditSink;
+  /** Read-side access to the audit log (admin query endpoint). */
+  auditRepository: AuditRepository;
+  /**
+   * Optional auth provider backing the portal login endpoint. When absent the
+   * login route is not registered (e.g. an ingest-only deployment).
+   */
+  authProvider?: AuthProvider;
   /**
    * Idempotency store. Implementations back this with an in-memory LRU or a
    * Redis instance depending on env.

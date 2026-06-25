@@ -24,6 +24,9 @@ const DEFAULT_SCOPES: readonly string[] = [
   "events:write",
   "replay:write",
   "session:read",
+  // The OSS single-tenant principal is the admin; it may read the audit log.
+  // A viewer-scoped deployment would omit `audit:read`.
+  "audit:read",
 ];
 
 export interface SingleTenantResolverOptions {

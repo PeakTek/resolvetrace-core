@@ -9,6 +9,10 @@
  */
 
 import {
+  AuditRecord,
+  AuditRecordInput,
+  AuditRepository,
+  AuditSink,
   EventRecord,
   EventRepository,
   EventSink,
@@ -158,3 +162,68 @@ export class EmptyEventRepository implements EventRepository {
     return { events: [] };
   }
 }
+
+/**
+ * In-memory audit sink + repository. Append-only by construction (no update /
+ * delete surface). Used by the test suite and as the default fallback when the
+ * server boots without `DATABASE_URL`. Implements both `AuditSink` (write) and
+ * `AuditRepository` (read) over a single backing array so tests can write via
+ * the handlers and read back via the query endpoint.
+ */
+export class InMemoryAuditSink implements AuditSink, AuditRepository {
+  private readonly byTenant = new Map<string, AuditRecord[]>();
+  /** When set, `append` throws this error — used to test non-fatal writes. */
+  public failOnAppend: Error | null = null;
+
+  async append(tenantId: string, record: AuditRecordInput): Promise<void> {
+    if (this.failOnAppend) {
+      throw this.failOnAppend;
+    }
+    this.rowsFor(tenantId).push({
+      actor: record.actor,
+      action: record.action,
+      targetType: record.targetType ?? null,
+      targetId: record.targetId ?? null,
+      occurredAt: new Date().toISOString(),
+      metadata: record.metadata ?? null,
+    });
+  }
+
+  private rowsFor(tenantId: string): AuditRecord[] {
+    let arr = this.byTenant.get(tenantId);
+    if (!arr) {
+      arr = [];
+      this.byTenant.set(tenantId, arr);
+    }
+    return arr;
+  }
+
+  async list(
+    tenantId: string,
+    opts: { limit: number; cursor?: string }
+  ): Promise<{ entries: AuditRecord[]; nextCursor?: string }> {
+    const limit = Math.min(Math.max(opts.limit || 50, 1), 200);
+    // Newest first. The opaque cursor is the 0-based offset of the next page.
+    const all = [...this.rowsFor(tenantId)].reverse();
+    let start = 0;
+    if (opts.cursor) {
+      const parsed = parseInt(
+        Buffer.from(opts.cursor, "base64").toString("utf8"),
+        10
+      );
+      if (Number.isFinite(parsed) && parsed >= 0) start = parsed;
+    }
+    const slice = all.slice(start, start + limit);
+    const hasMore = all.length > start + limit;
+    const nextCursor = hasMore
+      ? Buffer.from(String(start + limit), "utf8").toString("base64")
+      : undefined;
+    return nextCursor ? { entries: slice, nextCursor } : { entries: slice };
+  }
+
+  /** Visible for tests — all rows for a tenant in insertion order. */
+  all(tenantId: string): AuditRecord[] {
+    return [...this.rowsFor(tenantId)];
+  }
+}
+

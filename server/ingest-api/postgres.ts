@@ -15,6 +15,10 @@ import type { Logger } from "pino";
 import pg from "pg";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import {
+  AuditRecord,
+  AuditRecordInput,
+  AuditRepository,
+  AuditSink,
   EventRecord,
   EventRepository,
   EventSink,
@@ -626,5 +630,102 @@ export class PostgresEventRepository implements EventRepository {
       : undefined;
 
     return nextCursor ? { events, nextCursor } : { events };
+  }
+}
+
+// --- Audit log ---------------------------------------------------------
+
+interface AuditRow extends QueryResultRow {
+  id: string | number;
+  actor: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  occurred_at: Date | string;
+  metadata: unknown;
+}
+
+function mapAudit(row: AuditRow): AuditRecord {
+  return {
+    actor: row.actor,
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    occurredAt: toIso(row.occurred_at),
+    metadata:
+      row.metadata == null ? null : (row.metadata as Record<string, unknown>),
+  };
+}
+
+/**
+ * Append-only audit sink. INSERT only — there is no update/delete surface
+ * here, and the table's BEFORE UPDATE OR DELETE trigger (migration 004)
+ * rejects mutation at the database level regardless.
+ */
+export class PostgresAuditSink implements AuditSink {
+  constructor(private readonly pool: PgPool) {}
+
+  async append(tenantId: string, record: AuditRecordInput): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO audit_log (
+         tenant_id, actor, action, target_type, target_id, metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        tenantId,
+        record.actor,
+        record.action,
+        record.targetType ?? null,
+        record.targetId ?? null,
+        record.metadata ? JSON.stringify(record.metadata) : null,
+      ]
+    );
+  }
+}
+
+export class PostgresAuditRepository implements AuditRepository {
+  constructor(private readonly pool: PgPool) {}
+
+  async list(
+    tenantId: string,
+    opts: { limit: number; cursor?: string }
+  ): Promise<{ entries: AuditRecord[]; nextCursor?: string }> {
+    const limit = clamp(opts.limit || 50, 1, 200);
+    const cursor = decodeCursor<{ occurredAt: string; id: string }>(
+      opts.cursor
+    );
+
+    const params: unknown[] = [tenantId];
+    let whereCursor = "";
+    if (cursor) {
+      params.push(cursor.occurredAt, cursor.id);
+      // Keyset pagination, newest first. `(occurred_at, id)` is unique enough
+      // to break ties deterministically.
+      whereCursor = ` AND (occurred_at, id) < ($2, $3)`;
+    }
+    params.push(limit + 1);
+    const limitParam = `$${params.length}`;
+
+    const res = await this.pool.query<AuditRow>(
+      `SELECT id, actor, action, target_type, target_id, occurred_at, metadata
+         FROM audit_log
+        WHERE tenant_id = $1${whereCursor}
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT ${limitParam}`,
+      params
+    );
+
+    const rows = res.rows.slice(0, limit);
+    const entries = rows.map(mapAudit);
+    const hasMore = res.rows.length > limit;
+    const lastRow = rows[rows.length - 1];
+    const nextCursor =
+      hasMore && lastRow
+        ? encodeCursor({
+            occurredAt: toIso(lastRow.occurred_at),
+            id: String(lastRow.id),
+          })
+        : undefined;
+
+    return nextCursor ? { entries, nextCursor } : { entries };
   }
 }

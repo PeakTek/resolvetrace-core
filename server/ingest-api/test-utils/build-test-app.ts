@@ -9,12 +9,15 @@ import { buildApp } from "../app.js";
 import {
   EmptyEventRepository,
   EmptySessionRepository,
+  InMemoryAuditSink,
   InMemoryEventSink,
   InMemorySessionSink,
 } from "../in-memory-sinks.js";
 import { InMemoryIdempotencyStore } from "../plugins/idempotency.js";
 import { MockResolver, MockStorage } from "./mocks.js";
 import {
+  AuditRepository,
+  AuditSink,
   EventRepository,
   EventSink,
   RateLimitBudget,
@@ -23,6 +26,7 @@ import {
   SessionRepository,
   SessionSink,
 } from "../types.js";
+import type { AuthProvider } from "../../auth/index.js";
 
 export interface TestAppOverrides<
   ES extends EventSink = InMemoryEventSink,
@@ -40,6 +44,13 @@ export interface TestAppOverrides<
   sessionSink?: SS;
   sessionRepository?: SessionRepository;
   eventRepository?: EventRepository;
+  /**
+   * Audit sink. Defaults to a fresh `InMemoryAuditSink`. The same instance is
+   * also used as the audit repository unless `auditRepository` is overridden.
+   */
+  auditSink?: AuditSink & AuditRepository;
+  auditRepository?: AuditRepository;
+  authProvider?: AuthProvider;
   idempotencyStore?: InMemoryIdempotencyStore;
   readinessChecks?: ReadinessCheck[];
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
@@ -59,6 +70,8 @@ export async function buildTestApp<
     overrides.sessionRepository ?? new EmptySessionRepository();
   const eventRepository =
     overrides.eventRepository ?? new EmptyEventRepository();
+  const auditSink = overrides.auditSink ?? new InMemoryAuditSink();
+  const auditRepository = overrides.auditRepository ?? auditSink;
   const idempotencyStore =
     overrides.idempotencyStore ?? new InMemoryIdempotencyStore();
 
@@ -69,6 +82,9 @@ export async function buildTestApp<
     sessionSink,
     sessionRepository,
     eventRepository,
+    auditSink,
+    auditRepository,
+    authProvider: overrides.authProvider,
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,
@@ -83,6 +99,8 @@ export async function buildTestApp<
     sessionSink,
     sessionRepository,
     eventRepository,
+    auditSink,
+    auditRepository,
     idempotencyStore,
   };
 }

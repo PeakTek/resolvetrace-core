@@ -37,6 +37,12 @@ export interface MockResolverOptions {
    */
   portalApiKey?: string;
   env?: Environment;
+  /**
+   * Scopes granted to the resolved principal. Defaults to the OSS admin set
+   * including `audit:read`. Pass a set WITHOUT `audit:read` to simulate a
+   * viewer for RBAC tests on the audit endpoint.
+   */
+  scopes?: string[];
 }
 
 export class MockResolver implements TenantConfigResolver {
@@ -44,6 +50,7 @@ export class MockResolver implements TenantConfigResolver {
   private readonly apiKey: string;
   private readonly portalApiKey: string | undefined;
   private readonly env: Environment;
+  private readonly scopes: string[];
 
   constructor(opts: MockResolverOptions = {}) {
     const tenantId = opts.tenantId ?? "oss-test-tenant";
@@ -60,6 +67,12 @@ export class MockResolver implements TenantConfigResolver {
     this.apiKey = opts.apiKey ?? "test-api-key";
     this.portalApiKey = opts.portalApiKey;
     this.env = opts.env ?? "dev";
+    this.scopes = opts.scopes ?? [
+      "events:write",
+      "replay:write",
+      "session:read",
+      "audit:read",
+    ];
   }
 
   async resolveByTenantId(): Promise<TenantConfig> {
@@ -80,7 +93,7 @@ export class MockResolver implements TenantConfigResolver {
     return {
       config: this.config,
       env: this.env,
-      scopes: ["events:write", "replay:write", "session:read"],
+      scopes: [...this.scopes],
       jti: "mock-jti",
     };
   }

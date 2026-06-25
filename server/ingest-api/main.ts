@@ -17,12 +17,15 @@ import { buildApp } from "./app.js";
 import {
   EmptyEventRepository,
   EmptySessionRepository,
+  InMemoryAuditSink,
   InMemoryEventSink,
   InMemorySessionSink,
 } from "./in-memory-sinks.js";
 import { createIdempotencyStore } from "./plugins/idempotency.js";
 import {
   createPgPool,
+  PostgresAuditRepository,
+  PostgresAuditSink,
   PostgresEventRepository,
   PostgresEventSink,
   PostgresSessionRepository,
@@ -30,12 +33,15 @@ import {
   runMigrations,
 } from "./postgres.js";
 import {
+  AuditRepository,
+  AuditSink,
   EventRepository,
   EventSink,
   ReadinessCheck,
   SessionRepository,
   SessionSink,
 } from "./types.js";
+import type { AuthProvider } from "../auth/index.js";
 
 function parseBoolEnv(value: string | undefined): boolean {
   if (value === undefined) return false;
@@ -69,6 +75,8 @@ async function main(): Promise<void> {
   let sessionSink: SessionSink;
   let sessionRepository: SessionRepository;
   let eventRepository: EventRepository;
+  let auditSink: AuditSink;
+  let auditRepository: AuditRepository;
   let pgPool: Pool | undefined;
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -98,6 +106,8 @@ async function main(): Promise<void> {
     sessionSink = new PostgresSessionSink(pgPool);
     sessionRepository = new PostgresSessionRepository(pgPool);
     eventRepository = new PostgresEventRepository(pgPool);
+    auditSink = new PostgresAuditSink(pgPool);
+    auditRepository = new PostgresAuditRepository(pgPool);
     const pool = pgPool;
     readinessChecks.push({
       name: "postgres",
@@ -119,6 +129,11 @@ async function main(): Promise<void> {
     sessionSink = new InMemorySessionSink();
     sessionRepository = new EmptySessionRepository();
     eventRepository = new EmptyEventRepository();
+    // A single in-memory instance backs both the write and read sides so
+    // audit rows written during a smoke run are queryable in the same process.
+    const inMemoryAudit = new InMemoryAuditSink();
+    auditSink = inMemoryAudit;
+    auditRepository = inMemoryAudit;
   }
 
   // Secrets and auth providers are wired at boot when their config is
@@ -131,8 +146,9 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.warn("Secrets provider not initialised:", (err as Error).message);
   }
+  let authProvider: AuthProvider | undefined;
   try {
-    await createAuthProvider();
+    authProvider = await createAuthProvider();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("Auth provider not initialised:", (err as Error).message);
@@ -145,6 +161,9 @@ async function main(): Promise<void> {
     sessionSink,
     sessionRepository,
     eventRepository,
+    auditSink,
+    auditRepository,
+    authProvider,
     idempotencyStore,
     readinessChecks,
     corsOrigins,

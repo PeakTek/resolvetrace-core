@@ -11,6 +11,8 @@
 import { describe, expect, it } from "vitest";
 import type { QueryResult, QueryResultRow } from "pg";
 import {
+  PostgresAuditRepository,
+  PostgresAuditSink,
   PostgresEventRepository,
   PostgresEventSink,
   PostgresSessionRepository,
@@ -453,5 +455,89 @@ describe("PostgresEventRepository", () => {
     expect(result.events[0]!.attributes).toEqual({ x: 1 });
     const sql = pool.queries[0]!.text;
     expect(sql).toMatch(/ORDER BY captured_at ASC, event_id ASC/);
+  });
+});
+
+describe("PostgresAuditSink", () => {
+  it("issues a single INSERT into audit_log with serialized metadata", async () => {
+    const pool = new FakePool();
+    const sink = new PostgresAuditSink(pool);
+    await sink.append("tenant-1", {
+      actor: "portal-service:jti",
+      action: "session.view",
+      targetType: "session",
+      targetId: "s-1",
+      metadata: { result: "hit" },
+    });
+    expect(pool.queries).toHaveLength(1);
+    const q = pool.queries[0]!;
+    expect(q.text).toMatch(/INSERT INTO audit_log/);
+    expect(q.text).not.toMatch(/UPDATE|DELETE/i);
+    expect(q.params).toEqual([
+      "tenant-1",
+      "portal-service:jti",
+      "session.view",
+      "session",
+      "s-1",
+      JSON.stringify({ result: "hit" }),
+    ]);
+  });
+
+  it("passes null metadata through as null (not the string 'null')", async () => {
+    const pool = new FakePool();
+    const sink = new PostgresAuditSink(pool);
+    await sink.append("tenant-1", { actor: "a", action: "auth.login" });
+    expect(pool.queries[0]!.params![5]).toBeNull();
+  });
+});
+
+describe("PostgresAuditRepository", () => {
+  it("orders newest-first and emits a next cursor when a page is full", async () => {
+    const pool = new FakePool((text) => {
+      if (/FROM audit_log/.test(text)) {
+        return ok([
+          {
+            id: 2,
+            actor: "a",
+            action: "session.view",
+            target_type: "session",
+            target_id: "s-2",
+            occurred_at: "2026-04-20T12:02:00.000Z",
+            metadata: { result: "hit" },
+          },
+          {
+            id: 1,
+            actor: "a",
+            action: "auth.login",
+            target_type: null,
+            target_id: null,
+            occurred_at: "2026-04-20T12:01:00.000Z",
+            metadata: null,
+          },
+        ]);
+      }
+      return undefined;
+    });
+    const repo = new PostgresAuditRepository(pool);
+    // limit 1 => repo fetches limit+1 (=2), so hasMore is true and a cursor
+    // is returned.
+    const result = await repo.list("tenant-1", { limit: 1 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]!.action).toBe("session.view");
+    expect(result.nextCursor).toBeDefined();
+    const sql = pool.queries[0]!.text;
+    expect(sql).toMatch(/ORDER BY occurred_at DESC, id DESC/);
+  });
+
+  it("applies a keyset cursor predicate when a cursor is supplied", async () => {
+    const pool = new FakePool(() => ok([]));
+    const repo = new PostgresAuditRepository(pool);
+    const cursor = Buffer.from(
+      JSON.stringify({ occurredAt: "2026-04-20T12:00:00.000Z", id: "5" }),
+      "utf8"
+    ).toString("base64");
+    await repo.list("tenant-1", { limit: 50, cursor });
+    const sql = pool.queries[0]!.text;
+    expect(sql).toMatch(/\(occurred_at, id\) < \(\$2, \$3\)/);
   });
 });

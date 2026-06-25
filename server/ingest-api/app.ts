@@ -25,6 +25,7 @@ import { replayRoutes } from "./routes/replay.js";
 import { sessionRoutes } from "./routes/session.js";
 import { healthRoutes } from "./routes/health.js";
 import { portalRoutes } from "./routes/portal.js";
+import { portalAuthRoutes } from "./routes/portal-auth.js";
 
 export interface BuildAppOptions extends IngestApiDependencies {
   /** Pino log level. Defaults to env / "info". */
@@ -170,8 +171,18 @@ export async function buildApp(
   await fastify.register(portalRoutes, {
     sessionRepository: opts.sessionRepository,
     eventRepository: opts.eventRepository,
+    auditSink: opts.auditSink,
+    auditRepository: opts.auditRepository,
     rateLimitOptions: perClassLimits.session,
   });
+  // The login route is only meaningful when an auth provider is wired.
+  if (opts.authProvider) {
+    await fastify.register(portalAuthRoutes, {
+      authProvider: opts.authProvider,
+      auditSink: opts.auditSink,
+      rateLimitOptions: perClassLimits.session,
+    });
+  }
 
   return fastify;
 }

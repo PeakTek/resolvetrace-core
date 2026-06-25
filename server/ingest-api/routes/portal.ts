@@ -12,13 +12,38 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
-import { EventRepository, SessionRepository } from "../types.js";
+import {
+  AuditRepository,
+  AuditSink,
+  EventRepository,
+  SessionRepository,
+} from "../types.js";
 import { isValidSupportCode, normalizeSupportCode } from "../support-code.js";
+import {
+  AuditAction,
+  PRINCIPAL_PORTAL_SERVICE,
+  recordAudit,
+  SCOPE_AUDIT_READ,
+} from "../audit.js";
+import type { ApiKeyPrincipal } from "../../tenant-resolver/index.js";
 
 export interface PortalRoutesOptions {
   sessionRepository: SessionRepository;
   eventRepository: EventRepository;
+  auditSink: AuditSink;
+  auditRepository: AuditRepository;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
+}
+
+/**
+ * Resolve the audit `actor` string for an API-key/bearer principal. We never
+ * log the secret or the raw key; the `jti` is a non-sensitive key identifier,
+ * and we fall back to a stable service label so rows are always attributable.
+ */
+function actorFor(principal: ApiKeyPrincipal): string {
+  return principal.jti
+    ? `${PRINCIPAL_PORTAL_SERVICE}:${principal.jti}`
+    : PRINCIPAL_PORTAL_SERVICE;
 }
 
 /** Clamps to `[1, max]` with the given default when unspecified or non-numeric. */
@@ -152,6 +177,23 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
         principal.config.tenantId,
         normalized
       );
+
+      // Audit the lookup. Record only a hit/miss flag and (on a hit) the
+      // resolved session id — NEVER the raw support code, which is itself a
+      // semi-sensitive shareable token, nor any PII.
+      await recordAudit(
+        opts.auditSink,
+        principal.config.tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.SUPPORT_CODE_LOOKUP,
+          targetType: session ? "session" : null,
+          targetId: session ? session.sessionId : null,
+          metadata: { result: session ? "hit" : "miss" },
+        },
+        request.log
+      );
+
       if (!session) {
         reply.code(404);
         return {
@@ -213,6 +255,20 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
         };
       }
 
+      // Audit the sensitive read of a session's detail. The session id is the
+      // target; no PII in metadata.
+      await recordAudit(
+        opts.auditSink,
+        principal.config.tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.SESSION_VIEW,
+          targetType: "session",
+          targetId: sessionId,
+        },
+        request.log
+      );
+
       const eventsPage = await opts.eventRepository.listBySession(
         principal.config.tenantId,
         sessionId,
@@ -248,6 +304,59 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           httpStatus: e.httpStatus,
         })),
         eventsNextCursor: eventsPage.nextCursor ?? null,
+      };
+    }
+  );
+
+  // Admin-only audit query. Tenant-scoped, newest-first, paginated via an
+  // opaque cursor. RBAC: the principal must carry the `audit:read` scope
+  // (admin); viewers lack it and get 403. Backs the portal `/audit` view (A3).
+  fastify.get(
+    "/api/v1/portal/audit",
+    {
+      config: { rateLimit: opts.rateLimitOptions },
+    },
+    async (request, reply) => {
+      const principal = request.principal;
+      if (!principal) {
+        reply.code(401);
+        return { error: "unauthorized", message: "Missing principal." };
+      }
+      if (!principal.scopes.includes(SCOPE_AUDIT_READ)) {
+        reply.code(403);
+        return {
+          error: "forbidden",
+          message: "Reading the audit log requires admin privileges.",
+        };
+      }
+
+      const query = (request.query ?? {}) as Record<string, unknown>;
+      const limit = parseLimit(query["limit"], 50, 200);
+      if (typeof limit === "object") {
+        reply.code(400);
+        return { error: "invalid_request", message: limit.error };
+      }
+      const cursor = validateCursor(query["cursor"]);
+      if (typeof cursor === "object") {
+        reply.code(400);
+        return { error: "invalid_request", message: cursor.error };
+      }
+
+      const page = await opts.auditRepository.list(principal.config.tenantId, {
+        limit,
+        cursor,
+      });
+
+      return {
+        entries: page.entries.map((e) => ({
+          actor: e.actor,
+          action: e.action,
+          targetType: e.targetType,
+          targetId: e.targetId,
+          occurredAt: e.occurredAt,
+          metadata: e.metadata,
+        })),
+        nextCursor: page.nextCursor ?? null,
       };
     }
   );
