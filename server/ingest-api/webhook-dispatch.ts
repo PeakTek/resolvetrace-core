@@ -49,7 +49,7 @@ export interface WebhookReportPayload {
   supportCode: string | null;
   description: string | null;
   context: Record<string, unknown> | null;
-  recentBreadcrumbs: unknown[];
+  recentContext: unknown[];
   occurredAt: string;
 }
 
@@ -131,10 +131,12 @@ export function signBody(secret: string, body: string): string {
 }
 
 /**
- * Build the scrubbed payload from a `support.report_submitted` event. The
- * description and recent breadcrumbs are carried by the SDK in the event's
- * (scrubbed) attribute bag; the support code rides on `context.supportCode`.
- * We copy verbatim and add no raw data.
+ * Build the scrubbed payload from a `support.report_submitted` event. The SDK
+ * carries the description, support code, and recent-context metadata in the
+ * event's (scrubbed) attribute bag (`attributes.description` /
+ * `attributes.supportCode` / `attributes.recentContext`); the support code is
+ * additionally mirrored onto `context.supportCode` only when the caller
+ * supplied a full `EventContext`. We copy verbatim and add no raw data.
  */
 export function buildReportPayload(
   tenantId: string,
@@ -144,13 +146,15 @@ export function buildReportPayload(
   const attrs = (event.attributes ?? {}) as Record<string, unknown>;
   const context = (event.context ?? null) as Record<string, unknown> | null;
   const supportCode =
-    (context && typeof context.supportCode === "string"
-      ? context.supportCode
-      : null) ?? null;
+    typeof attrs.supportCode === "string"
+      ? attrs.supportCode
+      : context && typeof context.supportCode === "string"
+        ? context.supportCode
+        : null;
   const description =
     typeof attrs.description === "string" ? attrs.description : null;
-  const recentBreadcrumbs = Array.isArray(attrs.recentBreadcrumbs)
-    ? (attrs.recentBreadcrumbs as unknown[])
+  const recentContext = Array.isArray(attrs.recentContext)
+    ? (attrs.recentContext as unknown[])
     : [];
   return {
     tenantId,
@@ -159,7 +163,7 @@ export function buildReportPayload(
     supportCode,
     description,
     context,
-    recentBreadcrumbs,
+    recentContext,
     occurredAt: event.capturedAt,
   };
 }

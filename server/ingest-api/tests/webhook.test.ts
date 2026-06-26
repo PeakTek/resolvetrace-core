@@ -94,7 +94,8 @@ function reportEvent(overrides: Record<string, unknown> = {}) {
     attributes: {
       category: "payment_failed",
       description: "Checkout button does nothing",
-      recentBreadcrumbs: [
+      supportCode: "RT-7Q4K2",
+      recentContext: [
         { type: "action.click", at: "2026-04-20T12:34:50.000Z" },
       ],
     },
@@ -167,7 +168,7 @@ describe("webhook dispatch on support.report_submitted", () => {
     expect(payload.sessionId).toBe(VALID_ULID_SESSION);
     expect(payload.supportCode).toBe("RT-7Q4K2");
     expect(payload.description).toBe("Checkout button does nothing");
-    expect(payload.recentBreadcrumbs).toHaveLength(1);
+    expect(payload.recentContext).toHaveLength(1);
     expect(payload.occurredAt).toBeDefined();
 
     // A success audit row was written.
@@ -388,7 +389,7 @@ describe("buildReportPayload", () => {
       supportCode: "RT-7Q4K2",
       description: "Checkout button does nothing",
       context: expect.objectContaining({ supportCode: "RT-7Q4K2" }),
-      recentBreadcrumbs: [
+      recentContext: [
         { type: "action.click", at: "2026-04-20T12:34:50.000Z" },
       ],
       occurredAt: expect.any(String),
@@ -401,7 +402,7 @@ describe("buildReportPayload", () => {
     const payload = buildReportPayload(TENANT, "dev", evt);
     expect(payload.description).toBeNull();
     expect(payload.supportCode).toBeNull();
-    expect(payload.recentBreadcrumbs).toEqual([]);
+    expect(payload.recentContext).toEqual([]);
   });
 });
 

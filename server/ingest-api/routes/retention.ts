@@ -545,7 +545,7 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
         supportCode: "RT-TEST00",
         description: "This is a test report from the ResolveTrace portal.",
         context: { test: true },
-        recentBreadcrumbs: [],
+        recentContext: [],
         occurredAt: new Date().toISOString(),
       };
 
