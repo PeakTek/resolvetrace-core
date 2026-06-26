@@ -2,16 +2,23 @@ import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { RetentionForm } from "@/components/retention-form";
 import { PurgeButton } from "@/components/purge-button";
+import { WebhookForm } from "@/components/webhook-form";
 import {
   createIngestApiClient,
   IngestApiError,
   type PortalRetentionSettings,
+  type PortalWebhookSettings,
 } from "@/lib/ingest-api";
 
 type LoadResult =
   | { status: "ok"; data: PortalRetentionSettings }
   | { status: "forbidden" }
   | { status: "error"; baseUrl: string };
+
+type WebhookLoadResult =
+  | { status: "ok"; data: PortalWebhookSettings }
+  | { status: "forbidden" }
+  | { status: "error" };
 
 async function loadSettings(): Promise<LoadResult> {
   const client = createIngestApiClient();
@@ -30,12 +37,24 @@ async function loadSettings(): Promise<LoadResult> {
   }
 }
 
+async function loadWebhook(): Promise<WebhookLoadResult> {
+  const client = createIngestApiClient();
+  try {
+    const result = await client.getWebhookSettings();
+    if (result.status === "forbidden") return { status: "forbidden" };
+    if (result.status !== "ok") return { status: "error" };
+    return { status: "ok", data: result.data };
+  } catch {
+    return { status: "error" };
+  }
+}
+
 function forever(days: number): string {
   return days === 0 ? "forever" : `${days} day${days === 1 ? "" : "s"}`;
 }
 
 export default async function SettingsPage() {
-  const result = await loadSettings();
+  const [result, webhook] = await Promise.all([loadSettings(), loadWebhook()]);
 
   return (
     <Shell>
@@ -155,6 +174,31 @@ export default async function SettingsPage() {
               <div className="border-t border-neutral-100 pt-4">
                 <PurgeButton />
               </div>
+            </Card>
+
+            <Card className="space-y-4 p-6">
+              <div className="space-y-1">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                  Report webhook
+                </h2>
+                <p className="text-sm text-neutral-600">
+                  Submitted problem reports are forwarded server-side to this
+                  webhook (HMAC-signed). The signing secret is stored
+                  server-side and never shown.
+                </p>
+              </div>
+              {webhook.status === "ok" ? (
+                <WebhookForm settings={webhook.data} />
+              ) : webhook.status === "forbidden" ? (
+                <p className="text-sm text-neutral-600">
+                  Configuring the report webhook requires admin privileges.
+                </p>
+              ) : (
+                <p className="text-sm text-neutral-600">
+                  Could not load webhook settings. Check the portal&rsquo;s
+                  connection to the ingest API.
+                </p>
+              )}
             </Card>
           </>
         )}

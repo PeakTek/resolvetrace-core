@@ -149,6 +149,70 @@ export interface PortalSessionDeleteResult {
 }
 
 /**
+ * Admin-facing view of the tenant webhook config (Wave-25). The HMAC secret is
+ * WRITE-ONLY and never returned by the ingest API — we only learn whether one
+ * is configured via `secretConfigured`. The portal must never render the value.
+ */
+export interface PortalWebhookSettingsView {
+  enabled: boolean;
+  url: string;
+  secretConfigured: boolean;
+}
+
+export interface PortalWebhookSettings {
+  webhook: PortalWebhookSettingsView;
+  defaults: { enabled: boolean; url: string };
+  editable: boolean;
+}
+
+/**
+ * Fields a PUT may change. Omit a field to leave it unchanged. An empty-string
+ * `url` or `secret` clears that value server-side; `secret` is write-only.
+ */
+export interface PortalWebhookUpdate {
+  enabled?: boolean;
+  url?: string;
+  secret?: string;
+}
+
+export interface PortalWebhookUpdateResult {
+  webhook: PortalWebhookSettingsView;
+  updated: Record<string, unknown>;
+}
+
+/**
+ * Outcome of a "send test" delivery. `status` is the dispatcher's terminal
+ * state ("delivered" on a 2xx, otherwise a failure reason); `httpStatus` is the
+ * receiver's response code (null on a transport error); `error` is a non-PII
+ * summary when the delivery did not succeed.
+ */
+export interface PortalWebhookTestResult {
+  status: string;
+  attempts: number;
+  httpStatus: number | null;
+  error: string | null;
+}
+
+/**
+ * A single submitted problem report (Wave-25). Reports are
+ * `support.report_submitted` events; this is a flattened, scrubbed projection
+ * built from the event's attribute bag + its owning session, suitable for the
+ * cross-session reports surface. Description / support code / recent context are
+ * already scrubbed by the SDK before emission; we render them verbatim and never
+ * attempt to reconstruct raw values.
+ */
+export interface PortalReport {
+  eventId: string;
+  sessionId: string;
+  /** From `attributes.supportCode`, falling back to the session's code. */
+  supportCode: string | null;
+  description: string | null;
+  /** `attributes.source` — "widget" | "api" | other SDK-supplied value. */
+  source: string | null;
+  capturedAt: string;
+}
+
+/**
  * One chunk in a session's replay manifest as returned by A2's read-side
  * (`GET /api/v1/portal/sessions/:sessionId/replay`). `url` is a short-lived
  * signed GET URL for the masked rrweb chunk bytes; it expires (~300s), so the
@@ -218,6 +282,30 @@ export interface IngestApiClient {
   runPurge(): Promise<AdminResult<PortalPurgeResult>>;
   /** Admin-only: delete a session and its events/replay (403 viewer, 404 unknown). */
   deleteSession(id: string): Promise<AdminResult<PortalSessionDeleteResult>>;
+  /** Admin-only: read the tenant webhook config (403 for viewers). Secret never returned. */
+  getWebhookSettings(): Promise<AdminResult<PortalWebhookSettings>>;
+  /** Admin-only: update the webhook config (403 viewer, 400 invalid url/body). */
+  updateWebhookSettings(
+    body: PortalWebhookUpdate
+  ): Promise<AdminResult<PortalWebhookUpdateResult>>;
+  /**
+   * Admin-only: send a signed test delivery to the configured URL (403 viewer,
+   * 400 unconfigured, 502 delivery failed). On a delivery failure the upstream
+   * returns 502 but still includes a `result` body; we surface it as `ok` with
+   * the failure detail so the UI can show "failed (HTTP 500)" rather than a
+   * generic error.
+   */
+  testWebhook(): Promise<AdminResult<PortalWebhookTestResult>>;
+  /**
+   * Read recent submitted problem reports across sessions (Wave-25). There is
+   * no cross-session event query on the ingest API, so this fans out over the
+   * most recent sessions (bounded by `sessionScan`) and collects their
+   * `support.report_submitted` events server-side. Admin-gated like the other
+   * governance reads (403 for viewers) since it reads session detail.
+   */
+  listReports(opts?: {
+    sessionScan?: number;
+  }): Promise<AdminResult<PortalReport[]>>;
   /**
    * Whether this deployment's portal token carries the admin scope. Used to
    * decide whether to render admin-only controls (e.g. delete-session) — the
@@ -447,6 +535,126 @@ export function createIngestApiClient(
       );
       if (result.status !== "ok") return result;
       return { status: "ok", data: result.data.deleted };
+    },
+    async getWebhookSettings() {
+      return adminRequest<PortalWebhookSettings>(
+        "GET",
+        `/api/v1/portal/settings/webhook`
+      );
+    },
+    async updateWebhookSettings(body) {
+      return adminRequest<PortalWebhookUpdateResult>(
+        "PUT",
+        `/api/v1/portal/settings/webhook`,
+        body
+      );
+    },
+    async testWebhook() {
+      // The upstream returns 502 (not 2xx) when the delivery itself fails, but
+      // still includes the `{ result }` body. adminRequest would treat 502 as a
+      // thrown transport error, so we issue the request directly and classify:
+      // 403 viewer, 400 unconfigured, otherwise read the `result` body (2xx or
+      // 502) so the UI can render the delivery outcome.
+      const path = `/api/v1/portal/settings/webhook/test`;
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        });
+      } catch {
+        throw new IngestApiError(
+          `network error contacting ingest API at ${baseUrl}`,
+          0,
+          baseUrl
+        );
+      }
+      if (response.status === 403) return { status: "forbidden" as const };
+      if (response.status === 400) {
+        let message = "Webhook is not configured.";
+        try {
+          const err = (await response.json()) as { message?: unknown };
+          if (typeof err.message === "string") message = err.message;
+        } catch {
+          // keep default message
+        }
+        return { status: "invalid" as const, message };
+      }
+      let body: { result?: PortalWebhookTestResult };
+      try {
+        body = (await response.json()) as { result?: PortalWebhookTestResult };
+      } catch {
+        throw new IngestApiError(
+          `ingest API returned a non-JSON body for ${path}`,
+          response.status,
+          baseUrl
+        );
+      }
+      if (!body.result) {
+        throw new IngestApiError(
+          `ingest API responded ${response.status} for ${path}`,
+          response.status,
+          baseUrl
+        );
+      }
+      return { status: "ok" as const, data: body.result };
+    },
+    async listReports(opts = {}) {
+      const sessionScan = opts.sessionScan ?? 100;
+      // Probe admin access (and surface 403 for viewers) via a cheap admin read
+      // before scanning sessions, mirroring how the other governance reads gate.
+      const probe = await adminRequest<unknown>(
+        "GET",
+        `/api/v1/portal/settings/webhook`
+      );
+      if (probe.status === "forbidden") return { status: "forbidden" as const };
+      if (probe.status === "invalid") {
+        return { status: "invalid" as const, message: probe.message };
+      }
+      if (probe.status === "notFound") {
+        return { status: "ok" as const, data: [] };
+      }
+
+      const listing = await request<PortalSessionListResponse>(
+        `/api/v1/portal/sessions?limit=${encodeURIComponent(String(sessionScan))}`
+      );
+      if ("__notFound" in listing) {
+        return { status: "ok" as const, data: [] };
+      }
+
+      const reports: PortalReport[] = [];
+      for (const summary of listing.sessions) {
+        const detail = await request<PortalSessionDetailResponse>(
+          `/api/v1/portal/sessions/${encodeURIComponent(summary.sessionId)}`
+        );
+        if ("__notFound" in detail) continue;
+        for (const event of detail.events) {
+          if (event.type !== "support.report_submitted") continue;
+          const a = event.attributes ?? {};
+          const supportCode =
+            typeof a.supportCode === "string"
+              ? a.supportCode
+              : summary.supportCode;
+          reports.push({
+            eventId: event.eventId,
+            sessionId: summary.sessionId,
+            supportCode: supportCode ?? null,
+            description:
+              typeof a.description === "string" ? a.description : null,
+            source: typeof a.source === "string" ? a.source : null,
+            capturedAt: event.capturedAt,
+          });
+        }
+      }
+      // Newest first.
+      reports.sort((x, y) =>
+        x.capturedAt < y.capturedAt ? 1 : x.capturedAt > y.capturedAt ? -1 : 0
+      );
+      return { status: "ok" as const, data: reports };
     },
     async isAdmin() {
       try {

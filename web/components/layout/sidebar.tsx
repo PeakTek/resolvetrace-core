@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { ClipboardList, Play, Settings } from "lucide-react";
+import { ClipboardList, MessageSquareWarning, Play, Settings } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/sessions", label: "Sessions", icon: Play },
+  { href: "/reports", label: "Problem reports", icon: MessageSquareWarning },
   { href: "/audit", label: "Audit log", icon: ClipboardList },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
