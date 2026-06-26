@@ -329,6 +329,69 @@ export interface SettingsRepository {
 }
 
 /**
+ * The SDK scrubber/masking report carried on `POST /v1/replay/complete`
+ * (replay.json `scrubber`). Persisted with the manifest row for audit parity
+ * (which masking ruleset was in force when the chunk was captured).
+ */
+export interface ReplayScrubberReport {
+  version: string;
+  rulesDigest: string;
+  applied: string[];
+  budgetExceeded: boolean;
+  durationMs?: number;
+}
+
+/** One persisted replay-chunk manifest row. */
+export interface ReplayManifestRecord {
+  sessionId: string;
+  sequence: number;
+  /** Canonical object key for the chunk. */
+  key: string;
+  bytes: number;
+  sha256: string;
+  scrubber: ReplayScrubberReport | null;
+  /** Client-reported upload time (ISO 8601) or null. */
+  clientUploadedAt: string | null;
+  /** Server durable-accept time (ISO 8601). */
+  uploadedAt: string;
+}
+
+/** Input for persisting one replay-chunk manifest row. */
+export interface ReplayManifestInput {
+  sessionId: string;
+  sequence: number;
+  key: string;
+  bytes: number;
+  sha256: string;
+  scrubber?: ReplayScrubberReport | null;
+  clientUploadedAt?: string | null;
+}
+
+/**
+ * Persistence + read surface for the replay chunk manifest (migration 006).
+ * Written on `/v1/replay/complete`, read by the portal player read-side, and
+ * swept by retention / targeted erasure.
+ */
+export interface ReplayManifestStore {
+  /**
+   * Insert one manifest row and, when it is first-seen for
+   * `(tenantId, sessionId, sequence)`, increment `sessions.replay_chunk_count`.
+   * Idempotent: a repeat for the same sequence updates the row in place and
+   * does NOT re-increment. Returns whether the row was newly inserted.
+   */
+  recordChunk(
+    tenantId: string,
+    input: ReplayManifestInput
+  ): Promise<{ inserted: boolean }>;
+
+  /** List a session's manifest rows in playback (sequence) order. */
+  listBySession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<ReplayManifestRecord[]>;
+}
+
+/**
  * The storage-and-row surface the purge runner + targeted-deletion path need.
  * Deliberately narrow (only what those operations require) so it can be
  * implemented over Postgres in production and a fake in tests. All methods are
@@ -359,6 +422,27 @@ export interface PurgeStore {
 
   /** Zero out `replay_chunk_count` for a session after its objects are gone. */
   clearReplayChunkCount(tenantId: string, sessionId: string): Promise<void>;
+
+  /**
+   * Return the exact object keys recorded in the manifest for a session, so
+   * the caller can delete the storage objects authoritatively (rather than
+   * re-deriving keys from a chunk count). Empty array when the session has no
+   * manifest rows.
+   */
+  listReplayManifestKeys(
+    tenantId: string,
+    sessionId: string
+  ): Promise<string[]>;
+
+  /**
+   * Delete all manifest rows for a session after its storage objects are gone.
+   * Returns the number of rows deleted. Idempotent (a session with no rows is
+   * a no-op returning 0).
+   */
+  deleteReplayManifest(
+    tenantId: string,
+    sessionId: string
+  ): Promise<number>;
 
   /**
    * Delete up to `batchSize` `sessions` rows started before `cutoff` (and the
@@ -415,6 +499,8 @@ export interface IngestApiDependencies {
   auditRepository: AuditRepository;
   /** Read/write key/value settings store (editable retention overrides). */
   settingsRepository: SettingsRepository;
+  /** Persistence + read surface for the replay chunk manifest (migration 006). */
+  replayManifestStore: ReplayManifestStore;
   /** Row + storage surface the purge runner and deletion path operate on. */
   purgeStore: PurgeStore;
   /**

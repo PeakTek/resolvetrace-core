@@ -52,21 +52,35 @@ export function replayChunkKey(
 }
 
 /**
- * Delete every replay chunk object for a session, given its chunk count.
+ * Delete every replay chunk object for a session, then its manifest rows.
+ *
+ * Keys come from the manifest when present (authoritative — exact keys that
+ * were durably uploaded); we fall back to count-derived keys for legacy
+ * sessions that carry a `replay_chunk_count` but predate the manifest table.
+ * After the storage deletes we drop the manifest rows so a re-run is a no-op.
+ *
  * Tolerant: a storage delete that throws is logged and skipped so one bad
  * object doesn't abort the whole purge. Returns the number of objects for
  * which delete was *invoked* (attempted).
  */
 async function deleteReplayObjects(
+  store: PurgeStore,
   storage: ObjectStorage,
   tenantId: string,
   sessionId: string,
   replayChunkCount: number,
   logger?: Pick<Logger, "error">
 ): Promise<number> {
+  // Prefer the manifest's exact keys; fall back to count-derived keys.
+  let keys = await store.listReplayManifestKeys(tenantId, sessionId);
+  if (keys.length === 0 && replayChunkCount > 0) {
+    keys = Array.from({ length: replayChunkCount }, (_, seq) =>
+      replayChunkKey(tenantId, sessionId, seq)
+    );
+  }
+
   let attempted = 0;
-  for (let seq = 0; seq < replayChunkCount; seq++) {
-    const key = replayChunkKey(tenantId, sessionId, seq);
+  for (const key of keys) {
     try {
       await storage.deleteObject(key);
     } catch (err) {
@@ -75,6 +89,14 @@ async function deleteReplayObjects(
     }
     attempted += 1;
   }
+  // Drop the manifest rows now their objects are gone (idempotent).
+  await store.deleteReplayManifest(tenantId, sessionId).catch((err) => {
+    logger?.error(
+      { err, sessionId },
+      "replay manifest row delete failed (non-fatal)"
+    );
+    return 0;
+  });
   return attempted;
 }
 
@@ -156,6 +178,7 @@ export async function runPurge(
       if (page.length === 0) break;
       for (const { sessionId, replayChunkCount } of page) {
         counts.replayObjects += await deleteReplayObjects(
+          deps.purgeStore,
           deps.storage,
           tenantId,
           sessionId,
@@ -182,6 +205,7 @@ export async function runPurge(
     for (const { sessionId, replayChunkCount } of res.replayChunks) {
       if (replayChunkCount > 0) {
         counts.replayObjects += await deleteReplayObjects(
+          deps.purgeStore,
           deps.storage,
           tenantId,
           sessionId,
@@ -246,16 +270,16 @@ export async function deleteSessionCascade(
     return { found: false, eventsDeleted: 0, replayObjects: 0 };
   }
 
-  let replayObjects = 0;
-  if (res.replayChunkCount > 0) {
-    replayObjects = await deleteReplayObjects(
-      deps.storage,
-      tenantId,
-      sessionId,
-      res.replayChunkCount,
-      logger
-    );
-  }
+  // Always sweep replay objects + manifest rows: the manifest is authoritative
+  // even if the (now-deleted) session row's count was 0 or unknown.
+  const replayObjects = await deleteReplayObjects(
+    deps.purgeStore,
+    deps.storage,
+    tenantId,
+    sessionId,
+    res.replayChunkCount,
+    logger
+  );
 
   await recordAudit(
     deps.auditSink,

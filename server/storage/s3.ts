@@ -9,6 +9,7 @@
 
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -19,6 +20,8 @@ import {
   ObjectMetadata,
   ObjectNotFoundError,
   ObjectStorage,
+  SignedDownloadUrl,
+  SignedDownloadUrlInput,
   SignedUploadUrl,
   SignedUploadUrlInput,
   StorageConfigError,
@@ -27,11 +30,12 @@ import {
 /**
  * Signature for the presigner function. The production value is
  * `@aws-sdk/s3-request-presigner`'s `getSignedUrl`; tests can inject a
- * deterministic stub that does not need a real S3Client.
+ * deterministic stub that does not need a real S3Client. Accepts either a
+ * PUT (upload) or GET (download) command.
  */
 export type PresignerFn = (
   client: S3Client,
-  command: PutObjectCommand,
+  command: PutObjectCommand | GetObjectCommand,
   options: { expiresIn: number }
 ) => Promise<string>;
 
@@ -118,6 +122,27 @@ export class S3Storage implements ObjectStorage {
         "Content-Type": input.contentType,
         "Content-Length": String(input.maxBytes),
       },
+    };
+  }
+
+  async createSignedDownloadUrl(
+    input: SignedDownloadUrlInput
+  ): Promise<SignedDownloadUrl> {
+    if (input.expiresInSeconds <= 0) {
+      throw new StorageConfigError("expiresInSeconds must be positive");
+    }
+    const cmd = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: this.qualify(input.key),
+    });
+    const url = await this.presigner(this.client, cmd, {
+      expiresIn: input.expiresInSeconds,
+    });
+    return {
+      url,
+      expiresAt: new Date(
+        Date.now() + input.expiresInSeconds * 1000
+      ).toISOString(),
     };
   }
 

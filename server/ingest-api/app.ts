@@ -161,6 +161,8 @@ export async function buildApp(
   });
   await fastify.register(replayRoutes, {
     storage: opts.storage,
+    replayManifestStore: opts.replayManifestStore,
+    settingsRepository: opts.settingsRepository,
     signedUrlTtlSeconds: opts.signedUrlTtlSeconds,
     signedUrlRateLimit: perClassLimits.replay_signed_url,
     completeRateLimit: perClassLimits.replay_complete,
@@ -174,6 +176,8 @@ export async function buildApp(
     eventRepository: opts.eventRepository,
     auditSink: opts.auditSink,
     auditRepository: opts.auditRepository,
+    replayManifestStore: opts.replayManifestStore,
+    storage: opts.storage,
     rateLimitOptions: perClassLimits.session,
   });
   // Retention settings + purge + targeted-deletion surface (admin-only).

@@ -23,6 +23,10 @@ import {
   EventRepository,
   EventSink,
   PurgeStore,
+  ReplayManifestInput,
+  ReplayManifestRecord,
+  ReplayManifestStore,
+  ReplayScrubberReport,
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
@@ -762,6 +766,122 @@ export class PostgresSettingsRepository implements SettingsRepository {
   }
 }
 
+// --- Replay manifest ---------------------------------------------------
+
+interface ReplayManifestRow extends QueryResultRow {
+  session_id: string;
+  sequence: number | string;
+  key: string;
+  bytes: number | string;
+  sha256: string;
+  scrubber: unknown;
+  client_uploaded_at: Date | string | null;
+  uploaded_at: Date | string;
+}
+
+function mapManifest(row: ReplayManifestRow): ReplayManifestRecord {
+  return {
+    sessionId: row.session_id,
+    sequence:
+      typeof row.sequence === "string"
+        ? parseInt(row.sequence, 10)
+        : row.sequence,
+    key: row.key,
+    bytes:
+      typeof row.bytes === "string" ? parseInt(row.bytes, 10) : row.bytes,
+    sha256: row.sha256,
+    scrubber:
+      row.scrubber == null ? null : (row.scrubber as ReplayScrubberReport),
+    clientUploadedAt:
+      row.client_uploaded_at == null ? null : toIso(row.client_uploaded_at),
+    uploadedAt: toIso(row.uploaded_at),
+  };
+}
+
+/**
+ * Postgres-backed replay manifest store (migration 006). `recordChunk` inserts
+ * the row and, only on a first-seen insert, increments
+ * `sessions.replay_chunk_count` — both in one transaction so the counter and
+ * the manifest never drift. A repeat for the same `(tenant, session, sequence)`
+ * updates the row in place (refreshed bytes/sha/scrubber) and does NOT
+ * re-increment.
+ */
+export class PostgresReplayManifestStore implements ReplayManifestStore {
+  constructor(private readonly pool: PgPool) {}
+
+  async recordChunk(
+    tenantId: string,
+    input: ReplayManifestInput
+  ): Promise<{ inserted: boolean }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // `xmax = 0` is true for a freshly-inserted row and false for a row that
+      // an ON CONFLICT update touched — this distinguishes insert from update
+      // without a second round-trip.
+      const res = await client.query<{ inserted: boolean }>(
+        `INSERT INTO replay_manifest (
+           tenant_id, session_id, sequence, key, bytes, sha256,
+           scrubber, client_uploaded_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (tenant_id, session_id, sequence) DO UPDATE
+           SET key = EXCLUDED.key,
+               bytes = EXCLUDED.bytes,
+               sha256 = EXCLUDED.sha256,
+               scrubber = EXCLUDED.scrubber,
+               client_uploaded_at = EXCLUDED.client_uploaded_at
+         RETURNING (xmax = 0) AS inserted`,
+        [
+          tenantId,
+          input.sessionId,
+          input.sequence,
+          input.key,
+          input.bytes,
+          input.sha256,
+          input.scrubber ? JSON.stringify(input.scrubber) : null,
+          input.clientUploadedAt ?? null,
+        ]
+      );
+      const inserted = res.rows[0]?.inserted === true;
+      if (inserted) {
+        // Bump the session counter. Upsert a minimal session row if the start
+        // hasn't landed yet, so the count is never lost (LEAST keeps an earlier
+        // explicit start if one arrives later).
+        await client.query(
+          `INSERT INTO sessions (tenant_id, session_id, started_at, replay_chunk_count)
+             VALUES ($1, $2, now(), 1)
+           ON CONFLICT (tenant_id, session_id) DO UPDATE
+             SET replay_chunk_count = COALESCE(sessions.replay_chunk_count, 0) + 1,
+                 updated_at = now()`,
+          [tenantId, input.sessionId]
+        );
+      }
+      await client.query("COMMIT");
+      return { inserted };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listBySession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<ReplayManifestRecord[]> {
+    const res = await this.pool.query<ReplayManifestRow>(
+      `SELECT session_id, sequence, key, bytes, sha256,
+              scrubber, client_uploaded_at, uploaded_at
+         FROM replay_manifest
+        WHERE tenant_id = $1 AND session_id = $2
+        ORDER BY sequence ASC`,
+      [tenantId, sessionId]
+    );
+    return res.rows.map(mapManifest);
+  }
+}
+
 // --- Purge store -------------------------------------------------------
 
 interface SessionReplayRow extends QueryResultRow {
@@ -841,6 +961,31 @@ export class PostgresPurgeStore implements PurgeStore {
         WHERE tenant_id = $1 AND session_id = $2`,
       [tenantId, sessionId]
     );
+  }
+
+  async listReplayManifestKeys(
+    tenantId: string,
+    sessionId: string
+  ): Promise<string[]> {
+    const res = await this.pool.query<{ key: string }>(
+      `SELECT key FROM replay_manifest
+        WHERE tenant_id = $1 AND session_id = $2
+        ORDER BY sequence ASC`,
+      [tenantId, sessionId]
+    );
+    return res.rows.map((r) => r.key);
+  }
+
+  async deleteReplayManifest(
+    tenantId: string,
+    sessionId: string
+  ): Promise<number> {
+    const res = await this.pool.query(
+      `DELETE FROM replay_manifest
+        WHERE tenant_id = $1 AND session_id = $2`,
+      [tenantId, sessionId]
+    );
+    return res.rowCount ?? 0;
   }
 
   async purgeSessionsOlderThan(

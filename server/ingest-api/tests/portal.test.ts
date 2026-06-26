@@ -419,3 +419,148 @@ describe("GET /api/v1/portal/sessions/by-support-code/:code", () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe("GET /api/v1/portal/sessions/:sessionId/replay (read-side, Wave-24)", () => {
+  let close: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    if (close) await close();
+    close = undefined;
+  });
+
+  const TENANT = "oss-test-tenant";
+
+  async function seedManifest(store: import("../in-memory-sinks.js").InMemoryReplayManifestStore) {
+    await store.recordChunk(TENANT, {
+      sessionId: VALID_ULID_SESSION,
+      sequence: 0,
+      key: `${TENANT}/${VALID_ULID_SESSION}/0.rrweb`,
+      bytes: 1024,
+      sha256: "a".repeat(64),
+      scrubber: {
+        version: "sdk@0.1.0",
+        rulesDigest: "sha256:" + "b".repeat(64),
+        applied: ["maskAllInputs"],
+        budgetExceeded: false,
+      },
+      clientUploadedAt: "2026-04-20T12:35:00.000Z",
+    });
+    await store.recordChunk(TENANT, {
+      sessionId: VALID_ULID_SESSION,
+      sequence: 1,
+      key: `${TENANT}/${VALID_ULID_SESSION}/1.rrweb`,
+      bytes: 2048,
+      sha256: "c".repeat(64),
+    });
+  }
+
+  it("lists the manifest, mints a signed GET URL per chunk, and writes a replay.access audit row", async () => {
+    const { InMemoryReplayManifestStore } = await import("../in-memory-sinks.js");
+    const replayManifestStore = new InMemoryReplayManifestStore();
+    await seedManifest(replayManifestStore);
+    const { app, storage, auditSink } = await buildTestApp({
+      replayManifestStore,
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}/replay`,
+      headers: { authorization: AUTH_HEADER },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.sessionId).toBe(VALID_ULID_SESSION);
+    expect(body.chunkCount).toBe(2);
+    expect(body.chunks).toHaveLength(2);
+    expect(body.chunks[0].sequence).toBe(0);
+    expect(body.chunks[0].url).toContain(
+      `${TENANT}/${VALID_ULID_SESSION}/0.rrweb`
+    );
+    expect(body.chunks[0].scrubber).toMatchObject({ version: "sdk@0.1.0" });
+    expect(typeof body.chunks[0].urlExpiresAt).toBe("string");
+
+    // Signed GET minted for each chunk via storage.
+    expect(storage.downloadUrlsMinted.map((d) => d.key)).toEqual([
+      `${TENANT}/${VALID_ULID_SESSION}/0.rrweb`,
+      `${TENANT}/${VALID_ULID_SESSION}/1.rrweb`,
+    ]);
+
+    // replay.access audit row written for the access.
+    const rows = (auditSink as import("../in-memory-sinks.js").InMemoryAuditSink).all(
+      TENANT
+    );
+    const accessRows = rows.filter((r) => r.action === "replay.access");
+    expect(accessRows).toHaveLength(1);
+    expect(accessRows[0]!.targetType).toBe("session");
+    expect(accessRows[0]!.targetId).toBe(VALID_ULID_SESSION);
+    expect(accessRows[0]!.metadata).toMatchObject({ chunkCount: 2 });
+  });
+
+  it("returns 403 for a viewer (no audit:read scope) and writes no audit", async () => {
+    const { InMemoryReplayManifestStore, InMemoryAuditSink } = await import(
+      "../in-memory-sinks.js"
+    );
+    const replayManifestStore = new InMemoryReplayManifestStore();
+    await seedManifest(replayManifestStore);
+    const resolver = new MockResolver({ scopes: ["session:read"] });
+    const auditSink = new InMemoryAuditSink();
+    const { app, storage } = await buildTestApp({
+      replayManifestStore,
+      resolver,
+      auditSink,
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}/replay`,
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("forbidden");
+    expect(storage.downloadUrlsMinted).toHaveLength(0);
+    expect(auditSink.all(TENANT)).toHaveLength(0);
+  });
+
+  it("returns an empty chunk list for a session with no replay", async () => {
+    const { app, auditSink } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}/replay`,
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().chunks).toEqual([]);
+    // Still audited (an access happened, it just found nothing).
+    const rows = (auditSink as import("../in-memory-sinks.js").InMemoryAuditSink).all(
+      TENANT
+    );
+    expect(rows.filter((r) => r.action === "replay.access")).toHaveLength(1);
+  });
+
+  it("is tenant-scoped: another tenant's manifest is not visible", async () => {
+    const { InMemoryReplayManifestStore } = await import("../in-memory-sinks.js");
+    const replayManifestStore = new InMemoryReplayManifestStore();
+    // Seed a manifest under a DIFFERENT tenant.
+    await replayManifestStore.recordChunk("other-tenant", {
+      sessionId: VALID_ULID_SESSION,
+      sequence: 0,
+      key: `other-tenant/${VALID_ULID_SESSION}/0.rrweb`,
+      bytes: 10,
+      sha256: "d".repeat(64),
+    });
+    const { app } = await buildTestApp({ replayManifestStore });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}/replay`,
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().chunks).toEqual([]);
+  });
+});

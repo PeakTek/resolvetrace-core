@@ -17,6 +17,8 @@ import {
   ObjectMetadata,
   ObjectNotFoundError,
   ObjectStorage,
+  SignedDownloadUrl,
+  SignedDownloadUrlInput,
   SignedUploadUrl,
   SignedUploadUrlInput,
 } from "../../storage/index.js";
@@ -192,6 +194,7 @@ export interface MockStorageOptions {
 
 export class MockStorage implements ObjectStorage {
   public readonly signedUrlsMinted: SignedUploadUrlInput[] = [];
+  public readonly downloadUrlsMinted: SignedDownloadUrlInput[] = [];
   public readonly headCalls: string[] = [];
   public readonly deleted: string[] = [];
   private objects: Map<string, ObjectMetadata>;
@@ -212,6 +215,18 @@ export class MockStorage implements ObjectStorage {
         "Content-Type": input.contentType,
         "Content-Length": String(input.maxBytes),
       },
+    };
+  }
+
+  async createSignedDownloadUrl(
+    input: SignedDownloadUrlInput
+  ): Promise<SignedDownloadUrl> {
+    this.downloadUrlsMinted.push(input);
+    return {
+      url: `https://mock.storage.local/${input.key}?sig=stub-get`,
+      expiresAt: new Date(
+        Date.now() + input.expiresInSeconds * 1000
+      ).toISOString(),
     };
   }
 

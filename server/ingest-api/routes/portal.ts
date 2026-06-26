@@ -16,8 +16,10 @@ import {
   AuditRepository,
   AuditSink,
   EventRepository,
+  ReplayManifestStore,
   SessionRepository,
 } from "../types.js";
+import type { ObjectStorage } from "../../storage/index.js";
 import { isValidSupportCode, normalizeSupportCode } from "../support-code.js";
 import {
   AuditAction,
@@ -32,6 +34,12 @@ export interface PortalRoutesOptions {
   eventRepository: EventRepository;
   auditSink: AuditSink;
   auditRepository: AuditRepository;
+  /** Manifest read surface for the replay player read-side. */
+  replayManifestStore: ReplayManifestStore;
+  /** Object storage, for minting time-boxed signed GET URLs per chunk. */
+  storage: ObjectStorage;
+  /** Signed download-URL lifetime in seconds. Default 300 (5 minutes). */
+  replayDownloadTtlSeconds?: number;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
 }
 
@@ -304,6 +312,83 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           httpStatus: e.httpStatus,
         })),
         eventsNextCursor: eventsPage.nextCursor ?? null,
+      };
+    }
+  );
+
+  // Replay read-side (Wave-24). Lists a session's chunk manifest and mints a
+  // short-lived signed GET URL per chunk so the portal player can fetch the
+  // (masked) chunk bytes directly from storage. RBAC-admin (`audit:read`);
+  // viewers get 403. Tenant-scoped. EACH access writes a `replay.access` audit
+  // entry via the Wave-23 non-fatal writer.
+  const replayDownloadTtl = opts.replayDownloadTtlSeconds ?? 300;
+  fastify.get(
+    "/api/v1/portal/sessions/:sessionId/replay",
+    {
+      config: { rateLimit: opts.rateLimitOptions },
+    },
+    async (request, reply) => {
+      const principal = request.principal;
+      if (!principal) {
+        reply.code(401);
+        return { error: "unauthorized", message: "Missing principal." };
+      }
+      if (!principal.scopes.includes(SCOPE_AUDIT_READ)) {
+        reply.code(403);
+        return {
+          error: "forbidden",
+          message: "Accessing replay requires admin privileges.",
+        };
+      }
+
+      const { sessionId } = request.params as { sessionId: string };
+      const tenantId = principal.config.tenantId;
+
+      const manifest = await opts.replayManifestStore.listBySession(
+        tenantId,
+        sessionId
+      );
+
+      // Mint a time-boxed signed GET URL per chunk. Sequential is fine — a
+      // session has a small number of chunks.
+      const chunks = [];
+      for (const row of manifest) {
+        const signed = await opts.storage.createSignedDownloadUrl({
+          key: row.key,
+          expiresInSeconds: replayDownloadTtl,
+        });
+        chunks.push({
+          sequence: row.sequence,
+          bytes: row.bytes,
+          sha256: row.sha256,
+          scrubber: row.scrubber,
+          uploadedAt: row.uploadedAt,
+          clientUploadedAt: row.clientUploadedAt,
+          url: signed.url,
+          urlExpiresAt: signed.expiresAt,
+        });
+      }
+
+      // Audit the access (non-fatal). Record the session and how many chunks
+      // were surfaced — never the signed URLs or any PII.
+      await recordAudit(
+        opts.auditSink,
+        tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.REPLAY_ACCESS,
+          targetType: "session",
+          targetId: sessionId,
+          metadata: { chunkCount: chunks.length },
+        },
+        request.log
+      );
+
+      return {
+        sessionId,
+        chunkCount: chunks.length,
+        urlTtlSeconds: replayDownloadTtl,
+        chunks,
       };
     }
   );

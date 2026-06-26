@@ -17,6 +17,9 @@ import {
   EventRepository,
   EventSink,
   PurgeStore,
+  ReplayManifestInput,
+  ReplayManifestRecord,
+  ReplayManifestStore,
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
@@ -252,6 +255,79 @@ export class InMemorySettingsRepository implements SettingsRepository {
   }
 }
 
+/**
+ * In-memory replay manifest store. Backs the route/read-side tests and the
+ * DATABASE_URL-less smoke path. `recordChunk` is idempotent per
+ * `(tenant, session, sequence)` and reports whether the row was first-seen so
+ * the caller's counter logic can mirror the Postgres store.
+ */
+export class InMemoryReplayManifestStore implements ReplayManifestStore {
+  /** `${tenantId}` -> `${sessionId}:${sequence}` -> row. */
+  private readonly byTenant = new Map<
+    string,
+    Map<string, ReplayManifestRecord>
+  >();
+
+  private rowsFor(tenantId: string): Map<string, ReplayManifestRecord> {
+    let m = this.byTenant.get(tenantId);
+    if (!m) {
+      m = new Map();
+      this.byTenant.set(tenantId, m);
+    }
+    return m;
+  }
+
+  async recordChunk(
+    tenantId: string,
+    input: ReplayManifestInput
+  ): Promise<{ inserted: boolean }> {
+    const rows = this.rowsFor(tenantId);
+    const k = `${input.sessionId}:${input.sequence}`;
+    const inserted = !rows.has(k);
+    rows.set(k, {
+      sessionId: input.sessionId,
+      sequence: input.sequence,
+      key: input.key,
+      bytes: input.bytes,
+      sha256: input.sha256,
+      scrubber: input.scrubber ?? null,
+      clientUploadedAt: input.clientUploadedAt ?? null,
+      uploadedAt: new Date().toISOString(),
+    });
+    return { inserted };
+  }
+
+  async listBySession(
+    tenantId: string,
+    sessionId: string
+  ): Promise<ReplayManifestRecord[]> {
+    return [...this.rowsFor(tenantId).values()]
+      .filter((r) => r.sessionId === sessionId)
+      .sort((a, b) => a.sequence - b.sequence);
+  }
+
+  /** Visible for tests / purge delegation: exact keys for a session. */
+  keysFor(tenantId: string, sessionId: string): string[] {
+    return [...this.rowsFor(tenantId).values()]
+      .filter((r) => r.sessionId === sessionId)
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((r) => r.key);
+  }
+
+  /** Visible for tests / purge delegation: drop a session's rows. */
+  deleteFor(tenantId: string, sessionId: string): number {
+    const rows = this.rowsFor(tenantId);
+    let n = 0;
+    for (const [k, r] of rows) {
+      if (r.sessionId === sessionId) {
+        rows.delete(k);
+        n += 1;
+      }
+    }
+    return n;
+  }
+}
+
 /** A seedable in-memory session row for the purge store. */
 export interface PurgeSessionSeed {
   sessionId: string;
@@ -277,6 +353,14 @@ export interface PurgeEventSeed {
 export class InMemoryPurgeStore implements PurgeStore {
   private sessions = new Map<string, PurgeSessionSeed[]>();
   private events = new Map<string, PurgeEventSeed[]>();
+
+  /**
+   * Optional linked manifest store. When set, the purge store's replay-key
+   * lookups/deletes delegate to it (authoritative exact keys) instead of
+   * falling back to count-derived keys. Lets a test (or the smoke path) prove
+   * the manifest-driven purge end to end with one shared store.
+   */
+  constructor(private readonly manifestStore?: InMemoryReplayManifestStore) {}
 
   /** Seed sessions for a tenant (replaces any existing seed). */
   seedSessions(tenantId: string, rows: PurgeSessionSeed[]): void {
@@ -339,6 +423,20 @@ export class InMemoryPurgeStore implements PurgeStore {
     for (const s of rows) {
       if (s.sessionId === sessionId) s.replayChunkCount = 0;
     }
+  }
+
+  async listReplayManifestKeys(
+    tenantId: string,
+    sessionId: string
+  ): Promise<string[]> {
+    return this.manifestStore?.keysFor(tenantId, sessionId) ?? [];
+  }
+
+  async deleteReplayManifest(
+    tenantId: string,
+    sessionId: string
+  ): Promise<number> {
+    return this.manifestStore?.deleteFor(tenantId, sessionId) ?? 0;
   }
 
   async purgeSessionsOlderThan(

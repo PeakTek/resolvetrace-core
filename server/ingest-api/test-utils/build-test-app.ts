@@ -12,6 +12,7 @@ import {
   InMemoryAuditSink,
   InMemoryEventSink,
   InMemoryPurgeStore,
+  InMemoryReplayManifestStore,
   InMemorySessionSink,
   InMemorySettingsRepository,
 } from "../in-memory-sinks.js";
@@ -26,6 +27,7 @@ import {
   RateLimitBudget,
   RateLimitClass,
   ReadinessCheck,
+  ReplayManifestStore,
   SessionRepository,
   SessionSink,
   SettingsRepository,
@@ -60,6 +62,8 @@ export interface TestAppOverrides<
   auditRepository?: AuditRepository;
   /** Settings store. Defaults to a fresh `InMemorySettingsRepository`. */
   settingsRepository?: SettingsRepository;
+  /** Replay manifest store. Defaults to a fresh `InMemoryReplayManifestStore`. */
+  replayManifestStore?: ReplayManifestStore;
   /** Purge store. Defaults to a fresh `InMemoryPurgeStore`. */
   purgeStore?: PurgeStore;
   /** Retention config. Defaults to env-loaded (all "keep forever" in tests). */
@@ -88,7 +92,18 @@ export async function buildTestApp<
   const auditRepository = overrides.auditRepository ?? auditSink;
   const settingsRepository =
     overrides.settingsRepository ?? new InMemorySettingsRepository();
-  const purgeStore = overrides.purgeStore ?? new InMemoryPurgeStore();
+  // Default the manifest store + purge store to a linked pair so an
+  // integration test (complete -> purge) sees the manifest's exact keys via
+  // the purge store. A test that supplies either one explicitly opts out.
+  const replayManifestStore =
+    overrides.replayManifestStore ?? new InMemoryReplayManifestStore();
+  const purgeStore =
+    overrides.purgeStore ??
+    new InMemoryPurgeStore(
+      replayManifestStore instanceof InMemoryReplayManifestStore
+        ? replayManifestStore
+        : undefined
+    );
   // Default to a config loaded from an empty env: every window is "keep
   // forever" (0), so a purge in an un-configured test is a no-op unless the
   // test passes its own config or seeds + overrides windows.
@@ -107,6 +122,7 @@ export async function buildTestApp<
     auditSink,
     auditRepository,
     settingsRepository,
+    replayManifestStore,
     purgeStore,
     retentionConfig,
     authProvider: overrides.authProvider,
@@ -127,6 +143,7 @@ export async function buildTestApp<
     auditSink,
     auditRepository,
     settingsRepository,
+    replayManifestStore,
     purgeStore,
     retentionConfig,
     idempotencyStore,

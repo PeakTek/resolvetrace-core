@@ -20,6 +20,7 @@ import {
   InMemoryAuditSink,
   InMemoryEventSink,
   InMemoryPurgeStore,
+  InMemoryReplayManifestStore,
   InMemorySessionSink,
   InMemorySettingsRepository,
 } from "./in-memory-sinks.js";
@@ -31,6 +32,7 @@ import {
   PostgresEventRepository,
   PostgresEventSink,
   PostgresPurgeStore,
+  PostgresReplayManifestStore,
   PostgresSessionRepository,
   PostgresSessionSink,
   PostgresSettingsRepository,
@@ -43,6 +45,7 @@ import {
   EventSink,
   PurgeStore,
   ReadinessCheck,
+  ReplayManifestStore,
   SessionRepository,
   SessionSink,
   SettingsRepository,
@@ -89,6 +92,7 @@ async function main(): Promise<void> {
   let auditSink: AuditSink;
   let auditRepository: AuditRepository;
   let settingsRepository: SettingsRepository;
+  let replayManifestStore: ReplayManifestStore;
   let purgeStore: PurgeStore;
   let pgPool: Pool | undefined;
 
@@ -122,6 +126,7 @@ async function main(): Promise<void> {
     auditSink = new PostgresAuditSink(pgPool);
     auditRepository = new PostgresAuditRepository(pgPool);
     settingsRepository = new PostgresSettingsRepository(pgPool);
+    replayManifestStore = new PostgresReplayManifestStore(pgPool);
     purgeStore = new PostgresPurgeStore(pgPool);
     const pool = pgPool;
     readinessChecks.push({
@@ -152,7 +157,11 @@ async function main(): Promise<void> {
     // Non-durable settings + an empty purge store: the retention surface still
     // responds, there's just no persisted data to act on in this smoke mode.
     settingsRepository = new InMemorySettingsRepository();
-    purgeStore = new InMemoryPurgeStore();
+    // A linked manifest + purge pair so a smoke run's replay complete/read/
+    // purge are mutually consistent in-process.
+    const inMemoryManifest = new InMemoryReplayManifestStore();
+    replayManifestStore = inMemoryManifest;
+    purgeStore = new InMemoryPurgeStore(inMemoryManifest);
   }
 
   // Secrets and auth providers are wired at boot when their config is
@@ -183,6 +192,7 @@ async function main(): Promise<void> {
     auditSink,
     auditRepository,
     settingsRepository,
+    replayManifestStore,
     purgeStore,
     retentionConfig,
     authProvider,

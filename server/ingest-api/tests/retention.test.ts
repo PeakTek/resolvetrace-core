@@ -19,6 +19,7 @@ import { MockResolver, MockStorage } from "../test-utils/mocks.js";
 import {
   InMemoryAuditSink,
   InMemoryPurgeStore,
+  InMemoryReplayManifestStore,
   InMemorySettingsRepository,
 } from "../in-memory-sinks.js";
 import { loadRetentionConfig } from "../retention-config.js";
@@ -154,6 +155,52 @@ describe("runPurge", () => {
     expect(rows[0]!.replayChunkCount).toBe(0);
   });
 
+  it("purges replay using the manifest's exact keys + deletes manifest rows (Wave-24)", async () => {
+    const manifest = new InMemoryReplayManifestStore();
+    const purgeStore = new InMemoryPurgeStore(manifest);
+    const storage = new MockStorage();
+    // Session is 10d old: past the 7d replay window, within the 30d session
+    // window. Seed two manifest chunks with non-sequential-derivable keys.
+    purgeStore.seedSessions(TENANT, [
+      { sessionId: "s1", startedAt: daysAgo(10), replayChunkCount: 2 },
+    ]);
+    await manifest.recordChunk(TENANT, {
+      sessionId: "s1",
+      sequence: 0,
+      key: "oss-test-tenant/s1/0.rrweb",
+      bytes: 100,
+      sha256: "a".repeat(64),
+    });
+    await manifest.recordChunk(TENANT, {
+      sessionId: "s1",
+      sequence: 1,
+      key: "oss-test-tenant/s1/1.rrweb",
+      bytes: 200,
+      sha256: "b".repeat(64),
+    });
+
+    await runPurge(
+      {
+        purgeStore,
+        storage,
+        settingsRepository: new InMemorySettingsRepository(),
+        auditSink: new InMemoryAuditSink(),
+        retentionConfig: tinyWindows(),
+      },
+      TENANT,
+      "system"
+    );
+
+    // Storage objects deleted by exact manifest key.
+    expect(storage.deleted).toEqual([
+      "oss-test-tenant/s1/0.rrweb",
+      "oss-test-tenant/s1/1.rrweb",
+    ]);
+    // Manifest rows gone; counter zeroed; row survives (within session window).
+    expect(await manifest.listBySession(TENANT, "s1")).toHaveLength(0);
+    expect(purgeStore.sessionsFor(TENANT)[0]!.replayChunkCount).toBe(0);
+  });
+
   it("respects a persisted settings override over the env default", async () => {
     const purgeStore = new InMemoryPurgeStore();
     const settings = new InMemorySettingsRepository();
@@ -237,6 +284,36 @@ describe("deleteSessionCascade", () => {
     expect(res.found).toBe(false);
     expect(storage.deleted).toEqual([]);
     expect(auditSink.all(TENANT)).toHaveLength(0);
+  });
+
+  it("removes replay objects + manifest rows via the manifest on erasure (Wave-24)", async () => {
+    const manifest = new InMemoryReplayManifestStore();
+    const purgeStore = new InMemoryPurgeStore(manifest);
+    const storage = new MockStorage();
+    const auditSink = new InMemoryAuditSink();
+    purgeStore.seedSessions(TENANT, [
+      { sessionId: "target", startedAt: daysAgo(1), replayChunkCount: 1 },
+    ]);
+    await manifest.recordChunk(TENANT, {
+      sessionId: "target",
+      sequence: 0,
+      key: "oss-test-tenant/target/0.rrweb",
+      bytes: 100,
+      sha256: "a".repeat(64),
+    });
+
+    const res = await deleteSessionCascade(
+      { purgeStore, storage, auditSink },
+      TENANT,
+      "target",
+      "portal-service"
+    );
+
+    expect(res.found).toBe(true);
+    expect(res.replayObjects).toBe(1);
+    expect(storage.deleted).toEqual(["oss-test-tenant/target/0.rrweb"]);
+    // Manifest rows removed too.
+    expect(await manifest.listBySession(TENANT, "target")).toHaveLength(0);
   });
 });
 
@@ -528,5 +605,101 @@ describe("RetentionScheduler overlap guard", () => {
     release();
     expect(await first).toBe(true);
     expect(maxConcurrent).toBe(1);
+  });
+});
+
+describe("GET/PUT /api/v1/portal/settings/replay (Wave-24)", () => {
+  let close: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    if (close) await close();
+    close = undefined;
+  });
+
+  it("reads defaults for an admin when nothing is persisted", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.replay).toEqual({
+      enabled: true,
+      sampleRate: 1,
+      routeDenyList: [],
+    });
+    expect(body.editable).toBe(true);
+  });
+
+  it("updates settings (persisted), writes settings.update audit, and reflects them", async () => {
+    const settings = new InMemorySettingsRepository();
+    const auditSink = new InMemoryAuditSink();
+    const { app } = await buildTestApp({ settingsRepository: settings, auditSink });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+      payload: {
+        enabled: false,
+        sampleRate: 0.25,
+        routeDenyList: ["/checkout", "/admin/*"],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().replay).toEqual({
+      enabled: false,
+      sampleRate: 0.25,
+      routeDenyList: ["/checkout", "/admin/*"],
+    });
+
+    const persisted = await settings.getAll(TENANT);
+    expect(persisted["replay.enabled"]).toBe("false");
+    expect(persisted["replay.sample_rate"]).toBe("0.25");
+    expect(JSON.parse(persisted["replay.route_deny_list"]!)).toEqual([
+      "/checkout",
+      "/admin/*",
+    ]);
+
+    const rows = auditSink.all(TENANT);
+    expect(rows[0]!.action).toBe(AuditAction.SETTINGS_UPDATE);
+    expect(rows[0]!.targetType).toBe("replay");
+  });
+
+  it("rejects a sampleRate out of [0,1] with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+      payload: { sampleRate: 2 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("returns 403 for a viewer on read and write", async () => {
+    const resolver = new MockResolver({ scopes: ["session:read"] });
+    const { app } = await buildTestApp({ resolver });
+    close = () => app.close();
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(read.statusCode).toBe(403);
+    const write = await app.inject({
+      method: "PUT",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+      payload: { enabled: false },
+    });
+    expect(write.statusCode).toBe(403);
   });
 });

@@ -37,6 +37,13 @@ import {
   SETTING_RETENTION_REPLAY_DAYS,
   SETTING_RETENTION_SESSIONS_DAYS,
 } from "../retention.js";
+import {
+  REPLAY_DEFAULTS,
+  resolveReplaySettings,
+  SETTING_REPLAY_ENABLED,
+  SETTING_REPLAY_ROUTE_DENY_LIST,
+  SETTING_REPLAY_SAMPLE_RATE,
+} from "../replay-settings.js";
 import type { ApiKeyPrincipal } from "../../tenant-resolver/index.js";
 
 export interface RetentionRoutesOptions {
@@ -218,6 +225,138 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
           eventsDays: windows.eventsDays,
           sessionsDays: windows.sessionsDays,
           replayDays: windows.replayDays,
+        },
+        updated: changed,
+      };
+    }
+  );
+
+  // --- Read tenant replay settings --------------------------------------
+  // Source of truth for the SDK's replay policy + the portal toggle. Admin
+  // read; values fall back to REPLAY_DEFAULTS when unset.
+  fastify.get(
+    "/api/v1/portal/settings/replay",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const view = await resolveReplaySettings(
+        opts.settingsRepository,
+        principal.config.tenantId
+      );
+      return {
+        replay: {
+          enabled: view.enabled,
+          sampleRate: view.sampleRate,
+          routeDenyList: view.routeDenyList,
+        },
+        defaults: {
+          enabled: REPLAY_DEFAULTS.enabled,
+          sampleRate: REPLAY_DEFAULTS.sampleRate,
+          routeDenyList: [...REPLAY_DEFAULTS.routeDenyList],
+        },
+        editable: true,
+      };
+    }
+  );
+
+  // --- Update tenant replay settings (persisted, audited) ---------------
+  fastify.put(
+    "/api/v1/portal/settings/replay",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const changed: Record<string, unknown> = {};
+      const tenantId = principal.config.tenantId;
+
+      if ("enabled" in body) {
+        if (typeof body.enabled !== "boolean") {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`enabled` must be a boolean.",
+          };
+        }
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_REPLAY_ENABLED,
+          String(body.enabled)
+        );
+        changed.enabled = body.enabled;
+      }
+
+      if ("sampleRate" in body) {
+        const n = body.sampleRate;
+        if (typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > 1) {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`sampleRate` must be a number in [0, 1].",
+          };
+        }
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_REPLAY_SAMPLE_RATE,
+          String(n)
+        );
+        changed.sampleRate = n;
+      }
+
+      if ("routeDenyList" in body) {
+        const list = body.routeDenyList;
+        if (
+          !Array.isArray(list) ||
+          !list.every((x) => typeof x === "string")
+        ) {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`routeDenyList` must be an array of strings.",
+          };
+        }
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_REPLAY_ROUTE_DENY_LIST,
+          JSON.stringify(list)
+        );
+        changed.routeDenyList = list;
+      }
+
+      if (Object.keys(changed).length === 0) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message:
+            "Provide at least one of enabled, sampleRate, routeDenyList.",
+        };
+      }
+
+      await recordAudit(
+        opts.auditSink,
+        tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.SETTINGS_UPDATE,
+          targetType: "replay",
+          targetId: null,
+          metadata: { replay: changed },
+        },
+        request.log
+      );
+
+      const view = await resolveReplaySettings(
+        opts.settingsRepository,
+        tenantId
+      );
+      return {
+        replay: {
+          enabled: view.enabled,
+          sampleRate: view.sampleRate,
+          routeDenyList: view.routeDenyList,
         },
         updated: changed,
       };

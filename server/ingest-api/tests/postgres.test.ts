@@ -16,6 +16,7 @@ import {
   PostgresEventRepository,
   PostgresEventSink,
   PostgresPurgeStore,
+  PostgresReplayManifestStore,
   PostgresSessionRepository,
   PostgresSessionSink,
   PostgresSettingsRepository,
@@ -650,5 +651,116 @@ describe("PostgresPurgeStore", () => {
     expect(rows).toEqual([{ sessionId: "s1", replayChunkCount: 4 }]);
     expect(pool.queries[0]!.text).toMatch(/replay_chunk_count > 0/);
     expect(pool.queries[0]!.text).toMatch(/started_at < \$2/);
+  });
+});
+
+describe("PostgresReplayManifestStore", () => {
+  it("inserts the row and increments the counter on a first-seen chunk", async () => {
+    const pool = new FakePool((text) => {
+      if (text.includes("INSERT INTO replay_manifest")) {
+        return ok([{ inserted: true }]);
+      }
+      return undefined;
+    });
+    const store = new PostgresReplayManifestStore(pool);
+    const res = await store.recordChunk("t", {
+      sessionId: "s",
+      sequence: 0,
+      key: "t/s/0.rrweb",
+      bytes: 1024,
+      sha256: "a".repeat(64),
+      scrubber: {
+        version: "sdk@0.1.0",
+        rulesDigest: "sha256:" + "b".repeat(64),
+        applied: [],
+        budgetExceeded: false,
+      },
+      clientUploadedAt: "2026-04-20T12:35:00.000Z",
+    });
+    expect(res.inserted).toBe(true);
+
+    const sqls = pool.clientQueries.map((q) => q.text);
+    expect(sqls.some((s) => s.includes("INSERT INTO replay_manifest"))).toBe(true);
+    // First-seen => the session counter increment runs.
+    expect(
+      sqls.some((s) => s.includes("replay_chunk_count = COALESCE"))
+    ).toBe(true);
+    expect(sqls.some((s) => s.includes("COMMIT"))).toBe(true);
+  });
+
+  it("does NOT increment the counter on a repeated sequence (ON CONFLICT update)", async () => {
+    const pool = new FakePool((text) => {
+      if (text.includes("INSERT INTO replay_manifest")) {
+        return ok([{ inserted: false }]);
+      }
+      return undefined;
+    });
+    const store = new PostgresReplayManifestStore(pool);
+    const res = await store.recordChunk("t", {
+      sessionId: "s",
+      sequence: 0,
+      key: "t/s/0.rrweb",
+      bytes: 1024,
+      sha256: "a".repeat(64),
+    });
+    expect(res.inserted).toBe(false);
+    const sqls = pool.clientQueries.map((q) => q.text);
+    // No counter increment when the row already existed.
+    expect(
+      sqls.some((s) => s.includes("replay_chunk_count = COALESCE"))
+    ).toBe(false);
+  });
+
+  it("listBySession maps rows in sequence order", async () => {
+    const pool = new FakePool((text) => {
+      if (text.includes("FROM replay_manifest")) {
+        return ok([
+          {
+            session_id: "s",
+            sequence: 0,
+            key: "t/s/0.rrweb",
+            bytes: 1024,
+            sha256: "a".repeat(64),
+            scrubber: { version: "sdk@0.1.0" },
+            client_uploaded_at: "2026-04-20T12:35:00.000Z",
+            uploaded_at: "2026-04-20T12:35:01.000Z",
+          },
+        ]);
+      }
+      return undefined;
+    });
+    const store = new PostgresReplayManifestStore(pool);
+    const rows = await store.listBySession("t", "s");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.key).toBe("t/s/0.rrweb");
+    expect(rows[0]!.bytes).toBe(1024);
+    expect(rows[0]!.scrubber).toMatchObject({ version: "sdk@0.1.0" });
+  });
+});
+
+describe("PostgresPurgeStore — replay manifest sweep (Wave-24)", () => {
+  it("listReplayManifestKeys returns the keys in sequence order", async () => {
+    const pool = new FakePool((text) => {
+      if (text.includes("SELECT key FROM replay_manifest")) {
+        return ok([{ key: "t/s/0.rrweb" }, { key: "t/s/1.rrweb" }]);
+      }
+      return undefined;
+    });
+    const store = new PostgresPurgeStore(pool);
+    expect(await store.listReplayManifestKeys("t", "s")).toEqual([
+      "t/s/0.rrweb",
+      "t/s/1.rrweb",
+    ]);
+  });
+
+  it("deleteReplayManifest returns the deleted row count", async () => {
+    const pool = new FakePool((text) => {
+      if (text.includes("DELETE FROM replay_manifest")) {
+        return { rows: [], rowCount: 3, command: "", oid: 0, fields: [] };
+      }
+      return undefined;
+    });
+    const store = new PostgresPurgeStore(pool);
+    expect(await store.deleteReplayManifest("t", "s")).toBe(3);
   });
 });

@@ -27,6 +27,21 @@ export interface SignedUploadUrl {
   headers: Record<string, string>;
 }
 
+/** Inputs for minting a signed, time-boxed download (GET) URL. */
+export interface SignedDownloadUrlInput {
+  /** Object key (prefix-joined by the adapter from the tenant's key prefix). */
+  key: string;
+  /** URL lifetime, in seconds. */
+  expiresInSeconds: number;
+}
+
+/** Result of minting a signed download URL. */
+export interface SignedDownloadUrl {
+  url: string;
+  /** Absolute expiry, ISO 8601 — convenience for callers/audit. */
+  expiresAt: string;
+}
+
 /** Metadata for a stored object. */
 export interface ObjectMetadata {
   size: number;
@@ -39,6 +54,15 @@ export interface ObjectStorage {
   createSignedUploadUrl(
     input: SignedUploadUrlInput
   ): Promise<SignedUploadUrl>;
+  /**
+   * Mint a short-lived, signed GET URL for an existing object. Used by the
+   * portal read-side so the player can fetch a replay chunk directly from
+   * storage without the chunk bytes flowing through the API. The caller is
+   * responsible for authorization + auditing before minting.
+   */
+  createSignedDownloadUrl(
+    input: SignedDownloadUrlInput
+  ): Promise<SignedDownloadUrl>;
   headObject(key: string): Promise<ObjectMetadata>;
   deleteObject(key: string): Promise<void>;
 }

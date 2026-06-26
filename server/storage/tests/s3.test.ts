@@ -120,6 +120,43 @@ describe("S3Storage", () => {
     ).rejects.toBeInstanceOf(StorageConfigError);
   });
 
+  it("createSignedDownloadUrl forwards Bucket + (prefixed) Key + expiry and returns expiresAt", async () => {
+    const presigner = makeFakePresigner();
+    const s = new S3Storage({
+      region: "us-east-1",
+      bucket: "rt",
+      keyPrefix: "replay/",
+      client: makeFakeClient(),
+      presigner,
+    });
+    const result = await s.createSignedDownloadUrl({
+      key: "t/sess-1/0.rrweb",
+      expiresInSeconds: 120,
+    });
+    expect(presigner).toHaveBeenCalledTimes(1);
+    const [, command, opts] = (
+      presigner as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls[0] as [S3Client, PutObjectCommand, { expiresIn: number }];
+    expect(command.input.Bucket).toBe("rt");
+    expect(command.input.Key).toBe("replay/t/sess-1/0.rrweb");
+    expect(opts.expiresIn).toBe(120);
+    expect(result.url).toContain("replay/t/sess-1/0.rrweb");
+    expect(typeof result.expiresAt).toBe("string");
+    expect(Number.isNaN(Date.parse(result.expiresAt))).toBe(false);
+  });
+
+  it("createSignedDownloadUrl rejects non-positive expiry", async () => {
+    const s = new S3Storage({
+      region: "us-east-1",
+      bucket: "rt",
+      client: makeFakeClient(),
+      presigner: makeFakePresigner(),
+    });
+    await expect(
+      s.createSignedDownloadUrl({ key: "k", expiresInSeconds: 0 })
+    ).rejects.toBeInstanceOf(StorageConfigError);
+  });
+
   it("headObject returns size and optional sha256", async () => {
     const client = makeFakeClient(async () => ({
       ContentLength: 1234,

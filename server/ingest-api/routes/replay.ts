@@ -1,6 +1,6 @@
 /**
  * POST /v1/replay/signed-url — mint a pre-signed upload URL.
- * POST /v1/replay/complete — verify the uploaded chunk and record the manifest.
+ * POST /v1/replay/complete — verify the uploaded chunk and persist the manifest.
  *
  * The canonical chunk key is derived server-side from the tenant id, session
  * id, and chunk sequence. The SDK never supplies the key on the first leg —
@@ -11,16 +11,38 @@
  * On `/complete` we re-derive the key and reject if the payload contains a
  * different one.
  *
+ * Persistence (Wave-24): after the HeadObject verify, `/complete` INSERTs a
+ * `replay_manifest` row AND increments `sessions.replay_chunk_count`. The
+ * insert is idempotent on `(tenant, session, sequence)` — a repeat for the
+ * same sequence updates the row and does NOT re-increment the counter.
+ *
+ * Policy (Wave-24): both legs honour the tenant replay policy. When replay is
+ * disabled for the tenant, the upload is rejected (403) so a misconfigured /
+ * over-eager SDK cannot persist replay against tenant policy. The route
+ * deny-list is enforced SDK-side (A1) from the same tenant settings this
+ * server persists + exposes — it cannot be enforced from the upload body
+ * because the public `replay.json` request schema (strict, no extra props)
+ * carries no route name, and adding one would be a contract change.
+ *
  * The sha256 compare is performed via `storage.headObject()` when the
- * backend reports a checksum; otherwise we accept the client-asserted digest
- * (tracked as a gap in the README — Phase 1 storage adapter).
+ * backend reports a checksum; otherwise we accept the client-asserted digest.
  */
 
 import { FastifyPluginAsync } from "fastify";
 import { ObjectNotFoundError, ObjectStorage } from "../../storage/index.js";
+import type {
+  ReplayManifestStore,
+  ReplayScrubberReport,
+  SettingsRepository,
+} from "../types.js";
+import { isReplayAllowed, resolveReplaySettings } from "../replay-settings.js";
 
 export interface ReplayRoutesOptions {
   storage: ObjectStorage;
+  /** Manifest persistence (migration 006). */
+  replayManifestStore: ReplayManifestStore;
+  /** Tenant settings source for the replay policy (enabled / deny-list). */
+  settingsRepository: SettingsRepository;
   /** Signed-URL lifetime in seconds. Default 600 (10 minutes). */
   signedUrlTtlSeconds?: number;
   signedUrlRateLimit?: import("@fastify/rate-limit").RateLimitOptions;
@@ -56,6 +78,20 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
       }
       const tenantId = principal.config.tenantId;
 
+      // Enforce tenant replay policy before minting an upload URL: a disabled
+      // tenant gets nothing to upload to.
+      const policy = await resolveReplaySettings(
+        opts.settingsRepository,
+        tenantId
+      );
+      if (!isReplayAllowed(policy).allowed) {
+        reply.code(403);
+        return {
+          error: "replay_disabled",
+          message: "Replay capture is disabled for this tenant.",
+        };
+      }
+
       const key = buildKey(tenantId, body.sessionId, body.sequence);
       const signed = await opts.storage.createSignedUploadUrl({
         key,
@@ -88,6 +124,8 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
         key: string;
         bytes: number;
         sha256: string;
+        clientUploadedAt: string;
+        scrubber: ReplayScrubberReport;
       };
 
       const principal = request.principal;
@@ -96,6 +134,19 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
         return { error: "unauthorized" };
       }
       const tenantId = principal.config.tenantId;
+
+      // Policy first — never persist a manifest for a disabled tenant.
+      const policy = await resolveReplaySettings(
+        opts.settingsRepository,
+        tenantId
+      );
+      if (!isReplayAllowed(policy).allowed) {
+        reply.code(403);
+        return {
+          error: "replay_disabled",
+          message: "Replay capture is disabled for this tenant.",
+        };
+      }
 
       // The key MUST match the server-derived pattern anchored to the caller's
       // tenant id. Rejecting anything else prevents a client from pointing the
@@ -152,6 +203,19 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
           message: "Stored checksum differs from manifest.",
         };
       }
+
+      // Persist the manifest row + bump the session counter. Idempotent on a
+      // repeated sequence: the row is updated and the counter is NOT
+      // double-incremented (the store only increments on a first-seen insert).
+      await opts.replayManifestStore.recordChunk(tenantId, {
+        sessionId: body.sessionId,
+        sequence: body.sequence,
+        key: body.key,
+        bytes: body.bytes,
+        sha256: body.sha256,
+        scrubber: body.scrubber ?? null,
+        clientUploadedAt: body.clientUploadedAt ?? null,
+      });
 
       reply.code(200);
       return {
