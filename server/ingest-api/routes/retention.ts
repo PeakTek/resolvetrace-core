@@ -44,6 +44,22 @@ import {
   SETTING_REPLAY_ROUTE_DENY_LIST,
   SETTING_REPLAY_SAMPLE_RATE,
 } from "../replay-settings.js";
+import {
+  isHttpsUrl,
+  resolveWebhookConfig,
+  SETTING_WEBHOOK_ENABLED,
+  SETTING_WEBHOOK_SECRET,
+  SETTING_WEBHOOK_URL,
+  toWebhookSettingsView,
+  WEBHOOK_DEFAULTS,
+} from "../webhook-settings.js";
+import {
+  deliverWebhook,
+  FetchWebhookHttpClient,
+  type WebhookDispatchPolicy,
+  type WebhookHttpClient,
+  type WebhookReportPayload,
+} from "../webhook-dispatch.js";
 import type { ApiKeyPrincipal } from "../../tenant-resolver/index.js";
 
 export interface RetentionRoutesOptions {
@@ -53,6 +69,10 @@ export interface RetentionRoutesOptions {
   auditSink: AuditSink;
   retentionConfig: RetentionConfig;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
+  /** HTTP client for the "send test webhook" action. Defaults to fetch. */
+  webhookHttpClient?: WebhookHttpClient;
+  /** Optional retry/backoff/timeout overrides for the test dispatch. */
+  webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
 }
 
 /** Same actor derivation as the portal read routes — never logs the secret. */
@@ -359,6 +379,200 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
           routeDenyList: view.routeDenyList,
         },
         updated: changed,
+      };
+    }
+  );
+
+  // --- Read tenant webhook settings -------------------------------------
+  // Admin read. The secret is WRITE-ONLY: we never return it — only a flag
+  // saying whether one is configured.
+  fastify.get(
+    "/api/v1/portal/settings/webhook",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const config = await resolveWebhookConfig(
+        opts.settingsRepository,
+        principal.config.tenantId
+      );
+      return {
+        webhook: toWebhookSettingsView(config),
+        defaults: {
+          enabled: WEBHOOK_DEFAULTS.enabled,
+          url: WEBHOOK_DEFAULTS.url,
+        },
+        editable: true,
+      };
+    }
+  );
+
+  // --- Update tenant webhook settings (persisted, audited) --------------
+  // `secret` is accepted but never returned. An empty-string `secret` clears
+  // it. The audit row records targetType `webhook` and NEVER the secret value.
+  fastify.put(
+    "/api/v1/portal/settings/webhook",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const tenantId = principal.config.tenantId;
+      // Audit-safe summary: which fields changed, never the secret value.
+      const changed: Record<string, unknown> = {};
+
+      if ("enabled" in body) {
+        if (typeof body.enabled !== "boolean") {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`enabled` must be a boolean.",
+          };
+        }
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_WEBHOOK_ENABLED,
+          String(body.enabled)
+        );
+        changed.enabled = body.enabled;
+      }
+
+      if ("url" in body) {
+        if (typeof body.url !== "string") {
+          reply.code(400);
+          return { error: "invalid_request", message: "`url` must be a string." };
+        }
+        const url = body.url.trim();
+        // Allow clearing the URL with an empty string; otherwise require https
+        // (minimal SSRF guard — the admin owns the URL).
+        if (url !== "" && !isHttpsUrl(url)) {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`url` must be a valid https URL.",
+          };
+        }
+        await opts.settingsRepository.set(tenantId, SETTING_WEBHOOK_URL, url);
+        changed.url = url;
+      }
+
+      if ("secret" in body) {
+        if (typeof body.secret !== "string") {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`secret` must be a string.",
+          };
+        }
+        // Persist verbatim. NEVER echoed back; only `secretConfigured` is
+        // surfaced. An empty string clears the secret.
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_WEBHOOK_SECRET,
+          body.secret
+        );
+        // Audit metadata records that the secret changed — never its value.
+        changed.secret = body.secret.length > 0 ? "set" : "cleared";
+      }
+
+      if (Object.keys(changed).length === 0) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message: "Provide at least one of enabled, url, secret.",
+        };
+      }
+
+      await recordAudit(
+        opts.auditSink,
+        tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.SETTINGS_UPDATE,
+          targetType: "webhook",
+          targetId: null,
+          metadata: { webhook: changed },
+        },
+        request.log
+      );
+
+      const config = await resolveWebhookConfig(opts.settingsRepository, tenantId);
+      return {
+        webhook: toWebhookSettingsView(config),
+        updated: changed,
+      };
+    }
+  );
+
+  // --- Send a test webhook ---------------------------------------------
+  // Admin action: sign + POST a sample payload to the configured URL and
+  // return the delivery result. Requires the webhook to have an https URL and
+  // a secret; `enabled` is NOT required (an admin may test before enabling).
+  // Like every dispatch, the outcome is recorded as a `webhook.dispatch`
+  // audit row. The secret is never returned.
+  const testHttpClient =
+    opts.webhookHttpClient ?? new FetchWebhookHttpClient();
+  fastify.post(
+    "/api/v1/portal/settings/webhook/test",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const tenantId = principal.config.tenantId;
+      const config = await resolveWebhookConfig(opts.settingsRepository, tenantId);
+      if (!isHttpsUrl(config.url)) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message: "Configure a valid https webhook URL before sending a test.",
+        };
+      }
+      if (config.secret.length === 0) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message: "Configure a webhook secret before sending a test.",
+        };
+      }
+
+      const samplePayload: WebhookReportPayload = {
+        tenantId,
+        env: principal.env,
+        sessionId: null,
+        supportCode: "RT-TEST00",
+        description: "This is a test report from the ResolveTrace portal.",
+        context: { test: true },
+        recentBreadcrumbs: [],
+        occurredAt: new Date().toISOString(),
+      };
+
+      const result = await deliverWebhook(
+        {
+          httpClient: testHttpClient,
+          auditSink: opts.auditSink,
+          policy: opts.webhookDispatchPolicy,
+          logger: request.log,
+        },
+        tenantId,
+        actorFor(principal),
+        config,
+        samplePayload,
+        "support.report_submitted.test"
+      );
+
+      if (result.status !== "delivered") {
+        reply.code(502);
+      }
+      return {
+        result: {
+          status: result.status,
+          attempts: result.attempts,
+          httpStatus: result.httpStatus ?? null,
+          error: result.error ?? null,
+        },
       };
     }
   );

@@ -158,6 +158,11 @@ export async function buildApp(
     eventSink: opts.eventSink,
     idempotencyStore: opts.idempotencyStore,
     rateLimitOptions: perClassLimits.events,
+    // Webhook dispatch on `support.report_submitted` (feature #5).
+    settingsRepository: opts.settingsRepository,
+    auditSink: opts.auditSink,
+    webhookHttpClient: opts.webhookHttpClient,
+    webhookDispatchPolicy: opts.webhookDispatchPolicy,
   });
   await fastify.register(replayRoutes, {
     storage: opts.storage,
@@ -188,6 +193,9 @@ export async function buildApp(
     auditSink: opts.auditSink,
     retentionConfig: opts.retentionConfig,
     rateLimitOptions: perClassLimits.session,
+    // Webhook settings + "send test" action (feature #5).
+    webhookHttpClient: opts.webhookHttpClient,
+    webhookDispatchPolicy: opts.webhookDispatchPolicy,
   });
   // The login route is only meaningful when an auth provider is wired.
   if (opts.authProvider) {

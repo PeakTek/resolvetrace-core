@@ -46,6 +46,13 @@ export const AuditAction = {
   RETENTION_PURGE: "retention.purge",
   /** Replay artifact accessed (Wave 24 emits this). */
   REPLAY_ACCESS: "replay.access",
+  /**
+   * Outcome of forwarding a `support.report_submitted` report to the tenant's
+   * configured webhook (feature #5). Written once per dispatch with metadata
+   * `{ sessionId, status, httpStatus|error, attempts }` — NEVER the secret or
+   * the raw request body.
+   */
+  WEBHOOK_DISPATCH: "webhook.dispatch",
 } as const;
 
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];

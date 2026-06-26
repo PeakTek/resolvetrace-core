@@ -36,6 +36,10 @@ import {
   loadRetentionConfig,
   type RetentionConfig,
 } from "../retention-config.js";
+import type {
+  WebhookDispatchPolicy,
+  WebhookHttpClient,
+} from "../webhook-dispatch.js";
 import type { AuthProvider } from "../../auth/index.js";
 
 export interface TestAppOverrides<
@@ -72,6 +76,10 @@ export interface TestAppOverrides<
   idempotencyStore?: InMemoryIdempotencyStore;
   readinessChecks?: ReadinessCheck[];
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
+  /** Webhook HTTP client double (feature #5). Defaults to fetch in production. */
+  webhookHttpClient?: WebhookHttpClient;
+  /** Webhook retry/backoff/timeout overrides (e.g. fast/no backoff in tests). */
+  webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
 }
 
 export async function buildTestApp<
@@ -129,6 +137,8 @@ export async function buildTestApp<
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,
+    webhookHttpClient: overrides.webhookHttpClient,
+    webhookDispatchPolicy: overrides.webhookDispatchPolicy,
     disableRequestLogging: true,
   });
 

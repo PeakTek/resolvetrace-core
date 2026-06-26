@@ -10,6 +10,10 @@ import { ObjectStorage } from "../storage/index.js";
 import { TenantConfigResolver } from "../tenant-resolver/index.js";
 import type { AuthProvider } from "../auth/index.js";
 import type { RetentionConfig } from "./retention-config.js";
+import type {
+  WebhookDispatchPolicy,
+  WebhookHttpClient,
+} from "./webhook-dispatch.js";
 
 /** Pluggable event sink. In-memory default for tests; Postgres in production. */
 export interface EventSink {
@@ -532,6 +536,14 @@ export interface IngestApiDependencies {
    * window size in ms; we convert).
    */
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
+  /**
+   * HTTP client used to deliver report webhooks (feature #5). Defaults to a
+   * `fetch`-backed client with an abort timeout. Tests inject a captured-request
+   * double so dispatch is asserted without real network.
+   */
+  webhookHttpClient?: WebhookHttpClient;
+  /** Optional retry/backoff/timeout overrides for webhook dispatch. */
+  webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
 }
 
 export type RateLimitClass =

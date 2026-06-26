@@ -19,14 +19,31 @@
 import { FastifyPluginAsync } from "fastify";
 import { ValidationError } from "../plugins/body-validate.js";
 import {
+  AuditSink,
   EventSink,
   IdempotencyStore,
   SessionRequiredError,
   SessionUnknownError,
+  SettingsRepository,
   ValidatedEvent,
 } from "../types.js";
+import {
+  PRINCIPAL_PORTAL_SERVICE,
+} from "../audit.js";
+import {
+  dispatchReportWebhook,
+  FetchWebhookHttpClient,
+  type WebhookDispatchPolicy,
+  type WebhookHttpClient,
+} from "../webhook-dispatch.js";
 
 const DEDUP_WINDOW_SECONDS = 24 * 60 * 60; // 24 h, ADR-0011
+
+/**
+ * Event type that triggers a webhook dispatch to the tenant's configured
+ * ticketing webhook (in-app problem reporting, feature #5).
+ */
+const REPORT_EVENT_TYPE = "support.report_submitted";
 
 /**
  * Highest event-schema major this server understands. The wire schema only
@@ -41,6 +58,17 @@ export interface EventsRoutesOptions {
   eventSink: EventSink;
   idempotencyStore: IdempotencyStore;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
+  /** Settings store — used to resolve the tenant webhook config on report events. */
+  settingsRepository: SettingsRepository;
+  /** Audit sink — `webhook.dispatch` outcomes are recorded here. */
+  auditSink: AuditSink;
+  /**
+   * HTTP client the webhook dispatcher uses. Defaults to a `fetch`-backed
+   * client with an abort timeout; tests inject a captured-request double.
+   */
+  webhookHttpClient?: WebhookHttpClient;
+  /** Optional retry/backoff/timeout overrides for webhook dispatch. */
+  webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
 }
 
 
@@ -48,6 +76,11 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (
   fastify,
   opts
 ) => {
+  // Shared webhook HTTP client (default: fetch + abort-timeout). Built once per
+  // plugin registration; tests inject a captured-request double.
+  const webhookHttpClient =
+    opts.webhookHttpClient ?? new FetchWebhookHttpClient();
+
   fastify.post(
     "/v1/events",
     {
@@ -148,6 +181,35 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (
           }
           throw err;
         }
+      }
+
+      // In-app problem reporting (feature #5): for each freshly-ingested
+      // `support.report_submitted` event, forward the (already-scrubbed) report
+      // to the tenant's configured webhook. This is fire-and-forget — the call
+      // returns immediately and any delivery work runs after the response. It
+      // never blocks or breaks ingest: a disabled/unconfigured webhook is a
+      // no-op, and the dispatcher swallows all delivery errors (recording each
+      // outcome as a `webhook.dispatch` audit row). Dedup already happened above,
+      // so a report is dispatched at most once per (tenant, eventId).
+      const reportEvents = fresh.filter((e) => e.type === REPORT_EVENT_TYPE);
+      for (const reportEvent of reportEvents) {
+        dispatchReportWebhook(
+          {
+            settingsRepository: opts.settingsRepository,
+            auditSink: opts.auditSink,
+            httpClient: webhookHttpClient,
+            policy: opts.webhookDispatchPolicy,
+            logger: request.log,
+          },
+          tenantId,
+          principal.env,
+          // The ingest principal is an API key (the SDK's). Attribute the
+          // dispatch to the stable service label; never the secret/raw key.
+          principal.jti
+            ? `${PRINCIPAL_PORTAL_SERVICE}:${principal.jti}`
+            : PRINCIPAL_PORTAL_SERVICE,
+          reportEvent
+        );
       }
 
       if (duplicates === body.events.length) {
