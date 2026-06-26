@@ -148,6 +148,9 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           eventCount: s.eventCount,
           appVersion: s.appVersion,
           releaseChannel: s.releaseChannel,
+          // Wave-24: surface the replay counter so the portal list can show a
+          // "has replay" indicator without a per-row manifest fetch.
+          replayChunkCount: s.replayChunkCount,
         })),
         nextCursor: page.nextCursor ?? null,
       };

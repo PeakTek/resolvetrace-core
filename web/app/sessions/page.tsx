@@ -3,6 +3,7 @@ import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { SupportCodeLookup } from "@/components/support-code-lookup";
 import { DeletedToast } from "@/components/deleted-toast";
+import { ReplayBadge } from "@/components/replay/replay-badge";
 import {
   createIngestApiClient,
   IngestApiError,
@@ -95,12 +96,20 @@ export default async function SessionsPage({
                     className="border-t border-neutral-100 hover:bg-neutral-50"
                   >
                     <td className="px-4 py-2 font-mono text-xs">
-                      <Link
-                        href={`/sessions/${encodeURIComponent(s.sessionId)}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {s.sessionId}
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/sessions/${encodeURIComponent(s.sessionId)}`}
+                          className="text-blue-600 hover:underline"
+                        >
+                          {s.sessionId}
+                        </Link>
+                        {(s.replayChunkCount ?? 0) > 0 ? (
+                          <ReplayBadge
+                            chunkCount={s.replayChunkCount ?? 0}
+                            compact
+                          />
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-neutral-700">
                       {s.supportCode ? formatSupportCode(s.supportCode) : "—"}

@@ -12,6 +12,12 @@ export interface PortalSessionListItem {
   eventCount: number;
   appVersion: string | null;
   releaseChannel: string | null;
+  /**
+   * Number of captured (masked) replay chunks. Wave-24: drives the "has replay"
+   * indicator on the list. Optional so older ingest builds that don't project
+   * it still parse (treated as no replay).
+   */
+  replayChunkCount?: number | null;
 }
 
 export interface PortalSessionListResponse {
@@ -143,6 +149,33 @@ export interface PortalSessionDeleteResult {
 }
 
 /**
+ * One chunk in a session's replay manifest as returned by A2's read-side
+ * (`GET /api/v1/portal/sessions/:sessionId/replay`). `url` is a short-lived
+ * signed GET URL for the masked rrweb chunk bytes; it expires (~300s), so the
+ * portal re-fetches the listing rather than caching an expired URL. `scrubber`
+ * is the masking-config digest recorded at capture time (audit parity), never
+ * raw data.
+ */
+export interface PortalReplayChunk {
+  sequence: number;
+  bytes: number;
+  sha256: string;
+  scrubber: unknown | null;
+  uploadedAt: string;
+  clientUploadedAt: string | null;
+  url: string;
+  urlExpiresAt: string;
+}
+
+export interface PortalReplayManifest {
+  sessionId: string;
+  chunkCount: number;
+  urlTtlSeconds: number;
+  /** Sorted by sequence (ascending) by the read-side. */
+  chunks: PortalReplayChunk[];
+}
+
+/**
  * Outcome wrapper for the admin-gated governance calls. The ingest server
  * returns 403 when the portal token lacks the `audit:read` scope (a viewer
  * deployment); we surface that distinctly so pages can render a not-authorized
@@ -167,6 +200,14 @@ export interface IngestApiClient {
     limit?: number;
     cursor?: string;
   }): Promise<AdminResult<PortalAuditPage>>;
+  /**
+   * Admin-only: read a session's replay manifest with fresh signed chunk URLs
+   * (403 for viewers, 404 unknown session). Each call is audited server-side
+   * (`replay.access`). Re-call to refresh expired URLs rather than caching.
+   */
+  getReplayManifest(
+    sessionId: string
+  ): Promise<AdminResult<PortalReplayManifest>>;
   /** Admin-only: read effective retention settings (403 for viewers). */
   getRetentionSettings(): Promise<AdminResult<PortalRetentionSettings>>;
   /** Admin-only: update retention windows (403 viewer, 400 invalid). */
@@ -368,6 +409,13 @@ export function createIngestApiClient(
       return adminRequest<PortalAuditPage>(
         "GET",
         `/api/v1/portal/audit?${params.toString()}`
+      );
+    },
+    async getReplayManifest(sessionId) {
+      const encoded = encodeURIComponent(sessionId);
+      return adminRequest<PortalReplayManifest>(
+        "GET",
+        `/api/v1/portal/sessions/${encoded}/replay`
       );
     },
     async getRetentionSettings() {

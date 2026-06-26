@@ -67,6 +67,7 @@ describe("GET /api/v1/portal/sessions", () => {
       eventCount: 4,
       appVersion: "1.2.3",
       releaseChannel: "stable",
+      replayChunkCount: null,
     });
     expect(body.nextCursor).toBeNull();
     expect(sessionRepository.lastList?.opts.limit).toBe(50);

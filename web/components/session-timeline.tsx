@@ -10,7 +10,13 @@
  * Selectors are already masked by the SDK; URLs are already scrubbed. We never
  * attempt to reconstruct raw values — anything we don't recognise is shown via
  * the generic fallback row with its raw `attributes` JSON.
+ *
+ * Replay overlay (Wave-24): when an `onSeekTo` callback is supplied (the
+ * session has replay and the player is mounted), each row becomes a
+ * jump-to-time anchor that seeks the player to the event's `capturedAt`.
  */
+
+"use client";
 
 import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/format";
@@ -256,7 +262,14 @@ function Badge({
   );
 }
 
-function TimelineRow({ event }: { event: PortalSessionEvent }) {
+function TimelineRow({
+  event,
+  onSeekTo,
+}: {
+  event: PortalSessionEvent;
+  /** When set, the row becomes a jump-to-time anchor for the replay player. */
+  onSeekTo?: (capturedAt: string) => void;
+}) {
   const severity = severityOf(event);
   const category = categoryOf(event.type);
   const styles = SEVERITY_STYLES[severity];
@@ -266,7 +279,8 @@ function TimelineRow({ event }: { event: PortalSessionEvent }) {
     <li
       className={cn(
         "relative border-l-2 py-3 pl-6 pr-4 last:pb-1",
-        styles.accent
+        styles.accent,
+        onSeekTo ? "rounded-r hover:bg-neutral-50" : null
       )}
     >
       {/* Timeline dot sitting on the accent rail. */}
@@ -278,9 +292,20 @@ function TimelineRow({ event }: { event: PortalSessionEvent }) {
         aria-hidden
       />
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-sm font-medium text-neutral-900">
-          {row.title}
-        </span>
+        {onSeekTo ? (
+          <button
+            type="button"
+            onClick={() => onSeekTo(event.capturedAt)}
+            className="text-sm font-medium text-blue-700 hover:underline"
+            title="Jump the replay to this moment"
+          >
+            {row.title}
+          </button>
+        ) : (
+          <span className="text-sm font-medium text-neutral-900">
+            {row.title}
+          </span>
+        )}
         <span
           className={cn(
             "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset",
@@ -321,9 +346,16 @@ function TimelineRow({ event }: { event: PortalSessionEvent }) {
 export function SessionTimeline({
   events,
   capped,
+  onSeekTo,
 }: {
   events: PortalSessionEvent[];
   capped?: boolean;
+  /**
+   * Wave-24 replay overlay. When provided, each timeline row becomes a
+   * jump-to-time anchor that seeks the replay player to that event's
+   * `capturedAt`.
+   */
+  onSeekTo?: (capturedAt: string) => void;
 }) {
   if (events.length === 0) {
     return (
@@ -366,7 +398,7 @@ export function SessionTimeline({
       ) : null}
       <ol className="px-4 py-2">
         {ordered.map((e) => (
-          <TimelineRow key={e.eventId} event={e} />
+          <TimelineRow key={e.eventId} event={e} onSeekTo={onSeekTo} />
         ))}
       </ol>
       {capped ? (

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { SessionTimeline } from "@/components/session-timeline";
+import { ReplayPanel } from "@/components/replay/replay-panel";
+import { ReplayBadge } from "@/components/replay/replay-badge";
 import { SupportCodeBadge } from "@/components/support-code-badge";
 import { DeleteSession } from "@/components/delete-session";
 import {
@@ -126,6 +128,7 @@ export default async function SessionDetailPage({
 
   const { session, events } = result.data;
   const client = clientEntries(session.client);
+  const hasReplay = (session.replayChunkCount ?? 0) > 0;
 
   return (
     <Shell>
@@ -135,9 +138,14 @@ export default async function SessionDetailPage({
           <p className="font-mono text-sm text-neutral-600">
             {session.sessionId}
           </p>
-          {session.supportCode ? (
-            <SupportCodeBadge code={session.supportCode} />
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {session.supportCode ? (
+              <SupportCodeBadge code={session.supportCode} />
+            ) : null}
+            {hasReplay ? (
+              <ReplayBadge chunkCount={session.replayChunkCount ?? 0} />
+            ) : null}
+          </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-4">
             <div>
               <dt className="text-xs uppercase tracking-wide text-neutral-500">
@@ -197,17 +205,26 @@ export default async function SessionDetailPage({
           </Card>
         ) : null}
 
-        <Card className="overflow-hidden">
-          <div className="border-b border-neutral-100 px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-              Timeline ({session.eventCount})
-            </h2>
-          </div>
-          <SessionTimeline
+        {hasReplay ? (
+          <ReplayPanel
+            sessionId={session.sessionId}
             events={events}
+            eventCount={session.eventCount}
             capped={events.length >= AUTO_CAPTURE_CAP}
           />
-        </Card>
+        ) : (
+          <Card className="overflow-hidden">
+            <div className="border-b border-neutral-100 px-4 py-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                Timeline ({session.eventCount})
+              </h2>
+            </div>
+            <SessionTimeline
+              events={events}
+              capped={events.length >= AUTO_CAPTURE_CAP}
+            />
+          </Card>
+        )}
 
         {canDelete ? (
           <Card className="space-y-3 p-4">
