@@ -15,3 +15,8 @@ Thumbs.db
 .~lock.*#
 .vscode/
 .idea/
+
+# Root lockfile intentionally untracked: a macOS-generated lockfile + `npm ci`
+# omits linux native optional deps (rollup) on CI (npm/cli#4828). CI/Docker use
+# `npm install`. web/ keeps its lockfile (Next handles platform binaries).
+/package-lock.json
