@@ -167,6 +167,74 @@ describe("POST /v1/events", () => {
     expect(eventSink.drain()[0].events).toHaveLength(2);
   });
 
+  it("accepts an actor-decorated batch with 202 (identify() parity)", async () => {
+    // Regression for the contract<->server `actor` divergence: the SDK stamps
+    // `actor` on every envelope after client.identify(); the server must accept
+    // it rather than 400 the whole batch.
+    const { app, eventSink } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validBatch([
+        validEvent({
+          eventId: VALID_ULID_A,
+          actor: { userId: "user_abc123" },
+        }),
+        validEvent({
+          eventId: VALID_ULID_B,
+          actor: { userId: "user_def456", traits: { plan: "pro", tier: 2 } },
+        }),
+      ]),
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json().accepted).toBe(2);
+    // The actor survives intact onto the enqueued envelopes.
+    const enqueued = eventSink.drain()[0]!.events;
+    expect(enqueued[0]!.actor).toEqual({ userId: "user_abc123" });
+    expect(enqueued[1]!.actor).toEqual({
+      userId: "user_def456",
+      traits: { plan: "pro", tier: 2 },
+    });
+  });
+
+  it("rejects an actor missing the required userId with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      // actor present but userId omitted — Actor.userId is required.
+      payload: validBatch([validEvent({ actor: { traits: { plan: "free" } } })]),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("rejects an actor with an unknown extra key with 400", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      // Actor is additionalProperties:false — an unknown key is rejected.
+      payload: validBatch([
+        validEvent({ actor: { userId: "user_abc123", role: "admin" } }),
+      ]),
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
   it("rejects a reserved-namespace shadow type with 400", async () => {
     const { app } = await buildTestApp();
     close = () => app.close();

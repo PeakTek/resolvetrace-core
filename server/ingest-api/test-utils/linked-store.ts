@@ -59,6 +59,7 @@ function toEventRecord(evt: ValidatedEvent): EventRecord {
     severity: evt.severity ?? null,
     durationMs: evt.durationMs ?? null,
     httpStatus: evt.httpStatus ?? null,
+    actor: evt.actor ?? null,
   };
 }
 

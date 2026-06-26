@@ -313,6 +313,9 @@ export const portalRoutes: FastifyPluginAsync<PortalRoutesOptions> = async (
           severity: e.severity,
           durationMs: e.durationMs,
           httpStatus: e.httpStatus,
+          // Caller identity stamped by client.identify(...), or null
+          // (migration 007). Lets the session-detail view attribute events.
+          actor: e.actor,
         })),
         eventsNextCursor: eventsPage.nextCursor ?? null,
       };

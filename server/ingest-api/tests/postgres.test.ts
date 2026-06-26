@@ -184,6 +184,31 @@ describe("PostgresEventSink", () => {
     expect(sqls.every((s) => !/INSERT INTO sessions/.test(s))).toBe(true);
   });
 
+  it("persists actor as serialized JSON on the event INSERT", async () => {
+    const pool = new FakePool();
+    const sink = new PostgresEventSink(pool);
+    const actor = { userId: "user_abc123", traits: { plan: "pro", tier: 2 } };
+    await sink.enqueue("tenant-1", [makeEvent({ actor })]);
+
+    const insert = pool.clientQueries.find((q) =>
+      /INSERT INTO events/.test(q.text)
+    )!;
+    // The column list and the serialized actor param are both present.
+    expect(insert.text).toMatch(/actor/);
+    expect(insert.params).toContain(JSON.stringify(actor));
+  });
+
+  it("passes a null actor through as null (not the string 'null')", async () => {
+    const pool = new FakePool();
+    const sink = new PostgresEventSink(pool);
+    await sink.enqueue("tenant-1", [makeEvent()]); // no actor
+    const insert = pool.clientQueries.find((q) =>
+      /INSERT INTO events/.test(q.text)
+    )!;
+    // actor is the last positional param ($15); a missing actor is real null.
+    expect(insert.params![14]).toBeNull();
+  });
+
   it("event insert uses ON CONFLICT DO NOTHING for idempotency", async () => {
     const pool = new FakePool();
     const sink = new PostgresEventSink(pool);
@@ -458,6 +483,53 @@ describe("PostgresEventRepository", () => {
     expect(result.events[0]!.attributes).toEqual({ x: 1 });
     const sql = pool.queries[0]!.text;
     expect(sql).toMatch(/ORDER BY captured_at ASC, event_id ASC/);
+  });
+
+  it("reads actor back from the row (round-trips identify decoration)", async () => {
+    const actor = { userId: "user_abc123", traits: { plan: "pro" } };
+    const pool = new FakePool((text) => {
+      if (/FROM events/.test(text)) {
+        return ok([
+          {
+            event_id: "e-0",
+            session_id: "s-0",
+            type: "page_view",
+            captured_at: "2026-04-20T12:00:00.000Z",
+            attributes: null,
+            clock_skew_detected: false,
+            actor,
+          },
+        ]);
+      }
+      return undefined;
+    });
+    const repo = new PostgresEventRepository(pool);
+    const result = await repo.listBySession("tenant-1", "s-0", { limit: 50 });
+    expect(result.events[0]!.actor).toEqual(actor);
+    // The SELECT must request the actor column.
+    expect(pool.queries[0]!.text).toMatch(/actor/);
+  });
+
+  it("maps a missing actor column to null", async () => {
+    const pool = new FakePool((text) => {
+      if (/FROM events/.test(text)) {
+        return ok([
+          {
+            event_id: "e-1",
+            session_id: "s-0",
+            type: "page_view",
+            captured_at: "2026-04-20T12:00:00.000Z",
+            attributes: null,
+            clock_skew_detected: false,
+            // actor absent — legacy row / never identified.
+          },
+        ]);
+      }
+      return undefined;
+    });
+    const repo = new PostgresEventRepository(pool);
+    const result = await repo.listBySession("tenant-1", "s-0", { limit: 50 });
+    expect(result.events[0]!.actor).toBeNull();
   });
 });
 

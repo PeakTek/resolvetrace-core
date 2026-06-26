@@ -137,6 +137,12 @@ export interface EventRecord {
   severity: "info" | "warn" | "error" | null;
   durationMs: number | null;
   httpStatus: number | null;
+  /**
+   * Caller-supplied identity (`{ userId, traits? }`) stamped by
+   * `client.identify(...)`, or null. Persisted verbatim (migration 007) and
+   * surfaced so the session-detail view can attribute events to a user.
+   */
+  actor: Actor | null;
 }
 
 /**
@@ -165,6 +171,17 @@ export interface EventContext {
   networkState?: string;
   pageUrl?: string;
   supportCode?: string;
+}
+
+/**
+ * Caller-supplied identity decoration. Mirrors the contract's `Actor`
+ * (`events.json#/definitions/Actor`). The SDK stamps this on every envelope
+ * after `client.identify(...)`; `userId` is an opaque, non-PII identifier and
+ * `traits` is a free-form bag. Stored verbatim as JSON on the event row.
+ */
+export interface Actor {
+  userId: string;
+  traits?: Record<string, unknown>;
 }
 
 export interface ValidatedEvent {
@@ -196,6 +213,11 @@ export interface ValidatedEvent {
     version: string;
     runtime?: string;
   };
+  /**
+   * Optional caller identity stamped by `client.identify(...)`. Persisted
+   * verbatim on the event row. Mirrors the contract's `Actor`.
+   */
+  actor?: Actor;
 }
 
 export interface SessionStartRecord {

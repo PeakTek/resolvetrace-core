@@ -234,6 +234,65 @@ describe("integration: ingest taxonomy → persistence → portal session-detail
       "ux.rage_click",
     ]);
   });
+
+  it("an actor-decorated batch (post-identify) ingests with 202 and the actor round-trips to portal session-detail", async () => {
+    // End-to-end regression for the contract<->server `actor` divergence: the
+    // SDK stamps `actor` on every envelope after client.identify(); previously
+    // the server 400'd the whole batch. It must now accept it AND persist the
+    // identity so the session-detail read-side can attribute events to a user.
+    const store = new LinkedSessionEventStore();
+    const { app } = await buildTestApp({
+      eventSink: store,
+      sessionSink: store,
+      sessionRepository: store,
+      eventRepository: store,
+    });
+    close = () => app.close();
+
+    const startRes = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: auth,
+      payload: {
+        sessionId: VALID_ULID_SESSION,
+        startedAt: "2026-04-20T12:30:00.000Z",
+        appVersion: "1.0.0",
+      },
+    });
+    expect(startRes.statusCode).toBe(201);
+
+    const ingest = await app.inject({
+      method: "POST",
+      url: "/v1/events",
+      headers: auth,
+      payload: {
+        events: [
+          validEvent({
+            eventId: "01HWZX9KT1N2M3J4P5Q6R7S8D0",
+            sessionId: VALID_ULID_SESSION,
+            type: "action.submit",
+            capturedAt: "2026-04-20T12:30:01.000Z",
+            actor: { userId: "user_abc123", traits: { plan: "pro", tier: 2 } },
+          }),
+        ],
+      },
+    });
+    expect(ingest.statusCode).toBe(202);
+    expect(ingest.json().accepted).toBe(1);
+
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/sessions/${VALID_ULID_SESSION}`,
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(detail.statusCode).toBe(200);
+    const body = detail.json();
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0].actor).toEqual({
+      userId: "user_abc123",
+      traits: { plan: "pro", tier: 2 },
+    });
+  });
 });
 
 describe("integration: session-start support code → lookup → session detail", () => {

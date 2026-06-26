@@ -129,6 +129,24 @@ const schema = {
               runtime: { type: "string", minLength: 1, maxLength: 64 },
             },
           },
+          // Caller-supplied identity decoration. The SDK stamps this on every
+          // envelope after `client.identify(...)`. Optional; mirrors the
+          // contract's `Actor` (events.json#/definitions/Actor) EXACTLY —
+          // `userId` (1..128) required, optional free-form `traits` bag,
+          // `additionalProperties: false`. Keep the two byte-for-byte aligned;
+          // omitting it here makes the live server 400 every identified batch.
+          actor: {
+            type: "object",
+            additionalProperties: false,
+            required: ["userId"],
+            properties: {
+              userId: { type: "string", minLength: 1, maxLength: 128 },
+              traits: {
+                type: "object",
+                patternProperties: { "^(.*)$": {} },
+              },
+            },
+          },
         },
       },
     },

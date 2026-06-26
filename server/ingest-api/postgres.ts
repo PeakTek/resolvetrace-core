@@ -15,6 +15,7 @@ import type { Logger } from "pino";
 import pg from "pg";
 import type { Pool, QueryResult, QueryResultRow } from "pg";
 import {
+  Actor,
   AuditRecord,
   AuditRecordInput,
   AuditRepository,
@@ -202,8 +203,9 @@ export class PostgresEventSink implements EventSink {
           `INSERT INTO events (
              tenant_id, event_id, session_id, type, captured_at,
              attributes, scrubber, sdk, clock_skew_detected,
-             schema_version, context, severity, duration_ms, http_status
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             schema_version, context, severity, duration_ms, http_status,
+             actor
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            ON CONFLICT (tenant_id, event_id) DO NOTHING`,
           [
             tenantId,
@@ -220,6 +222,7 @@ export class PostgresEventSink implements EventSink {
             evt.severity ?? null,
             evt.durationMs ?? null,
             evt.httpStatus ?? null,
+            evt.actor ? JSON.stringify(evt.actor) : null,
           ]
         );
         // In strict mode the session row is guaranteed to exist (we
@@ -432,6 +435,7 @@ interface EventRow extends QueryResultRow {
   severity: string | null;
   duration_ms: number | null;
   http_status: number | null;
+  actor: unknown;
 }
 
 function toIso(v: Date | string): string {
@@ -478,6 +482,7 @@ function mapEvent(row: EventRow): EventRecord {
     severity: isSeverity(row.severity) ? row.severity : null,
     durationMs: row.duration_ms ?? null,
     httpStatus: row.http_status ?? null,
+    actor: row.actor == null ? null : (row.actor as Actor),
   };
 }
 
@@ -618,7 +623,7 @@ export class PostgresEventRepository implements EventRepository {
 
     const res = await this.pool.query<EventRow>(
       `SELECT event_id, session_id, type, captured_at, attributes, clock_skew_detected,
-              schema_version, context, severity, duration_ms, http_status
+              schema_version, context, severity, duration_ms, http_status, actor
          FROM events
         WHERE tenant_id = $1
           AND session_id = $2${whereCursor}
