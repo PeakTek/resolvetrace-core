@@ -65,8 +65,10 @@ export async function GET(
   }
 
   // Download every chunk's bytes server-side, then stitch the rrweb event
-  // arrays in strict sequence order. Each chunk's body is a JSON array of
-  // rrweb events (content-type application/vnd.resolvetrace.replay+rrweb).
+  // in strict sequence order. The SDK writes each chunk body as an envelope
+  // { sessionId, sequence, events: [...] } (content-type
+  // application/vnd.resolvetrace.replay+rrweb); we also accept a bare array for
+  // robustness.
   const ordered = [...manifest.chunks].sort((a, b) => a.sequence - b.sequence);
   const events: unknown[] = [];
   try {
@@ -78,14 +80,21 @@ export async function GET(
           { status: 502 }
         );
       }
-      const parsed = await res.json();
-      if (!Array.isArray(parsed)) {
+      const parsed: unknown = await res.json();
+      const chunkEvents = Array.isArray(parsed)
+        ? parsed
+        : parsed &&
+            typeof parsed === "object" &&
+            Array.isArray((parsed as { events?: unknown }).events)
+          ? (parsed as { events: unknown[] }).events
+          : null;
+      if (!chunkEvents) {
         return NextResponse.json(
           { error: "chunk_parse", sequence: chunk.sequence },
           { status: 502 }
         );
       }
-      for (const ev of parsed) events.push(ev);
+      for (const ev of chunkEvents) events.push(ev);
     }
   } catch {
     return NextResponse.json({ error: "chunk_fetch" }, { status: 502 });
