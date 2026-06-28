@@ -14,6 +14,11 @@ import { ObjectStorage, StorageConfigError } from "./types.js";
  * minimum `AWS_REGION` and `S3_BUCKET`. `S3_ENDPOINT` selects MinIO (or
  * any S3-compatible server) when present.
  *
+ * `S3_PUBLIC_ENDPOINT` (optional) signs **upload** URLs against a
+ * browser-reachable host for split-horizon setups (server on a private network
+ * where the store is e.g. `http://minio:9000`, browsers outside it). Leave it
+ * unset whenever `S3_ENDPOINT` is already browser-reachable (real S3/MinIO).
+ *
  * Credentials come from either `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`
  * or the default AWS SDK credential chain if those env vars are unset.
  */
@@ -37,6 +42,7 @@ export function createStorage(
     region,
     bucket,
     endpoint: env.S3_ENDPOINT || undefined,
+    publicEndpoint: env.S3_PUBLIC_ENDPOINT || undefined,
     credentials: explicitCredentials,
     keyPrefix: env.S3_PREFIX,
   });

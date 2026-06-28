@@ -212,4 +212,51 @@ describe("S3Storage", () => {
     });
     await expect(s.deleteObject("")).rejects.toBeInstanceOf(StorageConfigError);
   });
+
+  it("signs UPLOAD URLs with the upload client and DOWNLOAD URLs with the internal client", async () => {
+    // Split-horizon: uploads must be signed against a browser-reachable host
+    // (publicEndpoint), downloads stay on the internal endpoint (consumed by
+    // the portal read-proxy in-network).
+    const internal = makeFakeClient();
+    const upload = makeFakeClient();
+    const presigner = makeFakePresigner();
+    const s = new S3Storage({
+      region: "us-east-1",
+      bucket: "rt",
+      client: internal,
+      uploadClient: upload,
+      presigner,
+    });
+    await s.createSignedUploadUrl({
+      key: "t/s/0.rrweb",
+      contentType: "application/octet-stream",
+      maxBytes: 1,
+      expiresInSeconds: 60,
+    });
+    await s.createSignedDownloadUrl({ key: "t/s/0.rrweb", expiresInSeconds: 60 });
+
+    const calls = (presigner as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]![0]).toBe(upload); // upload → upload client
+    expect(calls[1]![0]).toBe(internal); // download → internal client
+  });
+
+  it("falls back to the internal client for uploads when no publicEndpoint/uploadClient", async () => {
+    const internal = makeFakeClient();
+    const presigner = makeFakePresigner();
+    const s = new S3Storage({
+      region: "us-east-1",
+      bucket: "rt",
+      client: internal,
+      presigner,
+    });
+    await s.createSignedUploadUrl({
+      key: "k",
+      contentType: "application/octet-stream",
+      maxBytes: 1,
+      expiresInSeconds: 60,
+    });
+    expect(
+      (presigner as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+    ).toBe(internal);
+  });
 });

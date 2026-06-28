@@ -49,6 +49,21 @@ export interface S3StorageOptions {
   bucket: string;
   /** Optional S3-compatible endpoint (e.g. MinIO at `http://minio:9000`). */
   endpoint?: string;
+  /**
+   * Optional browser-reachable endpoint used ONLY to sign **upload** URLs.
+   *
+   * A presigned URL's host is bound into its SigV4 signature, so the client
+   * that PUTs the chunk must reach the same host the server signed against.
+   * In a real deployment `endpoint` is already public, so this is unset and
+   * uploads sign against it. But in a split-horizon topology — server inside a
+   * private network (e.g. MinIO at `http://minio:9000`), browser outside it —
+   * the internal host is unreachable from the browser. Setting this to a
+   * browser-reachable endpoint (e.g. `http://localhost:9000`) makes upload
+   * URLs target a host the browser can actually PUT to, while the server's own
+   * operations (head/delete) and **download** presigning keep using `endpoint`
+   * (download URLs are consumed server-side by the portal read-proxy, in-net).
+   */
+  publicEndpoint?: string;
   /** Optional forced credentials. Falls back to the default credential chain. */
   credentials?: { accessKeyId: string; secretAccessKey: string };
   /** Optional global key prefix joined to every `key` parameter. */
@@ -58,6 +73,12 @@ export interface S3StorageOptions {
    * AWS client. Production code leaves this unset.
    */
   client?: S3Client;
+  /**
+   * Test seam: inject the client used to sign **upload** URLs (the
+   * `publicEndpoint` client). Production code leaves this unset; it is built
+   * from `publicEndpoint` (or falls back to the main client).
+   */
+  uploadClient?: S3Client;
   /**
    * Test seam: inject a presigner function. Defaults to the real SDK
    * `getSignedUrl`. Tests supply a stub that does not require the SDK's
@@ -70,6 +91,8 @@ export class S3Storage implements ObjectStorage {
   readonly bucket: string;
   readonly keyPrefix: string;
   private readonly client: S3Client;
+  /** Client used to sign UPLOAD URLs — same as `client` unless `publicEndpoint`. */
+  private readonly uploadClient: S3Client;
   private readonly presigner: PresignerFn;
 
   constructor(opts: S3StorageOptions) {
@@ -79,19 +102,24 @@ export class S3Storage implements ObjectStorage {
     this.keyPrefix = normalizePrefix(opts.keyPrefix);
     this.presigner = opts.presigner ?? getSignedUrl;
 
-    if (opts.client) {
-      this.client = opts.client;
-    } else {
+    const buildClient = (endpoint?: string): S3Client => {
       const cfg: S3ClientConfig = {
         region: opts.region,
         // MinIO is compatible with path-style addressing; virtual-host-style
         // requires DNS wildcards the local stack doesn't have.
-        forcePathStyle: Boolean(opts.endpoint),
+        forcePathStyle: Boolean(endpoint),
       };
-      if (opts.endpoint) cfg.endpoint = opts.endpoint;
+      if (endpoint) cfg.endpoint = endpoint;
       if (opts.credentials) cfg.credentials = opts.credentials;
-      this.client = new S3Client(cfg);
-    }
+      return new S3Client(cfg);
+    };
+
+    this.client = opts.client ?? buildClient(opts.endpoint);
+    // Upload URLs sign against the browser-reachable endpoint when configured;
+    // otherwise they sign against the same client as everything else.
+    this.uploadClient =
+      opts.uploadClient ??
+      (opts.publicEndpoint ? buildClient(opts.publicEndpoint) : this.client);
   }
 
   async createSignedUploadUrl(
@@ -113,7 +141,8 @@ export class S3Storage implements ObjectStorage {
       // replay this header value.
       ContentLength: input.maxBytes,
     });
-    const url = await this.presigner(this.client, cmd, {
+    // Sign UPLOAD URLs against the browser-reachable client (see publicEndpoint).
+    const url = await this.presigner(this.uploadClient, cmd, {
       expiresIn: input.expiresInSeconds,
     });
     return {
