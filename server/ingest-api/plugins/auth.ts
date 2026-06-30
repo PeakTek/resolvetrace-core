@@ -13,7 +13,6 @@ import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import {
   ApiKeyPrincipal,
-  InvalidApiKeyError,
   TenantConfigResolver,
   TenantResolverError,
 } from "../../tenant-resolver/index.js";
@@ -30,6 +29,35 @@ export class UnauthorizedError extends Error {
     super(message);
     this.name = "UnauthorizedError";
   }
+}
+
+/**
+ * True when `err` is (or duck-types as) a resolver-layer auth failure that
+ * must render as 401.
+ *
+ * The resolver is pluggable: a composing deployment can supply one from a
+ * separate package that carries its OWN copy of the `TenantResolverError`
+ * classes — e.g. a vendored types module kept byte-identical by a drift gate.
+ * Such a copy is structurally identical but has a DISTINCT class identity, so a
+ * plain `instanceof` against this module's class returns false and the auth
+ * failure would otherwise escape to the generic 500 handler. We keep
+ * `instanceof` as the same-realm fast path and fall back to matching the stable
+ * `TenantResolverError` constructor name anywhere on the prototype chain, which
+ * also covers every subclass (`InvalidApiKeyError`, tenant-not-found,
+ * suspended/offboarding, …) regardless of which realm minted it.
+ */
+function isTenantResolverError(err: unknown): boolean {
+  if (err instanceof TenantResolverError) return true;
+  if (typeof err !== "object" || err === null) return false;
+  for (
+    let proto: object | null = err;
+    proto !== null;
+    proto = Object.getPrototypeOf(proto) as object | null
+  ) {
+    const ctor = (proto as { constructor?: { name?: string } }).constructor;
+    if (ctor?.name === "TenantResolverError") return true;
+  }
+  return false;
 }
 
 export interface AuthPluginOptions {
@@ -64,10 +92,7 @@ const authPluginImpl: FastifyPluginAsync<AuthPluginOptions> = async (
     try {
       request.principal = await opts.resolver.resolveByApiKey(apiKey);
     } catch (err) {
-      if (
-        err instanceof InvalidApiKeyError ||
-        err instanceof TenantResolverError
-      ) {
+      if (isTenantResolverError(err)) {
         throw new UnauthorizedError("Invalid API key");
       }
       throw err;
