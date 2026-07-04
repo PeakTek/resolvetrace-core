@@ -55,6 +55,10 @@ RUN if [ -f package-lock.json ]; then \
 # excluded from the tsc include list already (see tsconfig.json).
 COPY tsconfig.json ./
 COPY server ./server
+# `npm run build` runs `node scripts/copy-migrations.mjs` after tsc, so the
+# scripts dir must be in the build context (the runtime stage copies the .sql
+# migrations separately, but the build script still needs this file present).
+COPY scripts ./scripts
 
 # Compile to ./dist
 RUN npm run build
