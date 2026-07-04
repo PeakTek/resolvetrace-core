@@ -50,7 +50,14 @@ export interface ReplayRoutesOptions {
 }
 
 const REPLAY_CONTENT_TYPE = "application/vnd.resolvetrace.replay+rrweb";
-const CHUNK_KEY_PATTERN = /^[a-z0-9-]{1,64}\/[0-9A-HJKMNP-TV-Z]{26}\/\d+\.rrweb$/;
+// Tenant segment: either a lowercase slug (the single-tenant default,
+// "oss-single-tenant") or an uppercase Crockford-base32 ULID. Tenant ids come
+// from the deployment's TenantConfigResolver; ULID ids were previously
+// rejected here, so the signed-url route minted keys that this same server
+// then 400'd at /v1/replay/complete. The exact-match check against buildKey()
+// below is the real ownership guard; this pattern is a format backstop only.
+const CHUNK_KEY_PATTERN =
+  /^(?:[a-z0-9-]{1,64}|[0-9A-HJKMNP-TV-Z]{26})\/[0-9A-HJKMNP-TV-Z]{26}\/\d+\.rrweb$/;
 
 export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
   fastify,

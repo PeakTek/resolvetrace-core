@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { buildTestApp } from "../test-utils/build-test-app.js";
+import { MockResolver } from "../test-utils/mocks.js";
 import { InMemoryReplayManifestStore } from "../in-memory-sinks.js";
 import { isReplayAllowed } from "../replay-settings.js";
 import {
@@ -177,6 +178,31 @@ describe("POST /v1/replay/complete", () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toBe("stage1_precondition_failed");
+  });
+
+  // Regression: a deployment's TenantConfigResolver may issue uppercase
+  // Crockford-ULID tenant ids. CHUNK_KEY_PATTERN used to allow only lowercase
+  // slugs in the tenant segment, so signed-url minted a key that complete
+  // itself then rejected with key_format (400) on every such deployment.
+  it("accepts manifest when the tenant id is an uppercase ULID", async () => {
+    const ULID_TENANT = "01KWQJPEAPD44FYXYNHJR1B1HH";
+    const { app, storage } = await buildTestApp({
+      resolver: new MockResolver({ tenantId: ULID_TENANT }),
+    });
+    close = () => app.close();
+
+    const expectedKey = `${ULID_TENANT}/${VALID_ULID_SESSION}/0.rrweb`;
+    storage.putObject(expectedKey, { size: 1024, sha256: VALID_SHA256 });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/complete",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validManifestRequest({ key: expectedKey }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().durable).toBe(true);
   });
 });
 
