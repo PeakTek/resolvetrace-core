@@ -506,6 +506,35 @@ export interface ReadinessCheck {
   check(): Promise<boolean>;
 }
 
+/** Context handed to a deployment's replay-upload guard for one upload leg. */
+export interface ReplayUploadGuardContext {
+  tenantId: string;
+  sessionId: string;
+  sequence: number;
+  /** Which upload leg is being authorized. */
+  leg: "signed-url" | "complete";
+}
+
+/**
+ * Deployment-supplied authorization hook for replay uploads.
+ *
+ * A composing server may gate replay uploads on policy this server cannot
+ * know — billing state, data residency, an end-user consent requirement, or
+ * any other deployment rule. When injected, both upload legs consult it after
+ * the tenant replay policy passes; when absent (the default), uploads proceed
+ * exactly as before — this seam adds no behavior on its own.
+ *
+ * Semantics are fail-closed: a deny verdict rejects the upload with 403
+ * (non-retryable), and a guard that THROWS rejects with 503 (retryable) — a
+ * guard is only present when the deployment has a rule that must hold, so an
+ * unavailable guard must not silently admit uploads.
+ */
+export interface ReplayUploadGuard {
+  allow(
+    ctx: ReplayUploadGuardContext
+  ): Promise<{ allowed: true } | { allowed: false; reason?: string }>;
+}
+
 /**
  * Runtime wiring passed in to the Fastify app builder. All dependencies are
  * parameterised so tests can swap them for mocks.
@@ -566,6 +595,12 @@ export interface IngestApiDependencies {
   webhookHttpClient?: WebhookHttpClient;
   /** Optional retry/backoff/timeout overrides for webhook dispatch. */
   webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
+  /**
+   * Optional deployment-supplied authorization for replay uploads (see
+   * `ReplayUploadGuard`). Absent by default: uploads are governed solely by
+   * the tenant replay policy, exactly as before.
+   */
+  replayUploadGuard?: ReplayUploadGuard;
 }
 
 export type RateLimitClass =

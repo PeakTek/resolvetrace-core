@@ -28,11 +28,13 @@
  * backend reports a checksum; otherwise we accept the client-asserted digest.
  */
 
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyReply } from "fastify";
 import { ObjectNotFoundError, ObjectStorage } from "../../storage/index.js";
 import type {
   ReplayManifestStore,
   ReplayScrubberReport,
+  ReplayUploadGuard,
+  ReplayUploadGuardContext,
   SettingsRepository,
 } from "../types.js";
 import { isReplayAllowed, resolveReplaySettings } from "../replay-settings.js";
@@ -43,10 +45,50 @@ export interface ReplayRoutesOptions {
   replayManifestStore: ReplayManifestStore;
   /** Tenant settings source for the replay policy (enabled / deny-list). */
   settingsRepository: SettingsRepository;
+  /**
+   * Optional deployment-supplied upload authorization, consulted on both legs
+   * after the tenant policy passes. Absent = allow (unchanged behavior).
+   */
+  replayUploadGuard?: ReplayUploadGuard;
   /** Signed-URL lifetime in seconds. Default 600 (10 minutes). */
   signedUrlTtlSeconds?: number;
   signedUrlRateLimit?: import("@fastify/rate-limit").RateLimitOptions;
   completeRateLimit?: import("@fastify/rate-limit").RateLimitOptions;
+}
+
+/**
+ * Consult the deployment's upload guard, if any. Returns true when the upload
+ * may proceed; otherwise the reply has been sent. Fail-closed: a deny verdict
+ * is a 403 (the SDK does not retry it), a guard failure is a 503 (retryable) —
+ * an unavailable guard must not silently admit uploads.
+ */
+async function passesUploadGuard(
+  guard: ReplayUploadGuard | undefined,
+  ctx: ReplayUploadGuardContext,
+  reply: FastifyReply
+): Promise<boolean> {
+  if (!guard) return true;
+  let verdict;
+  try {
+    verdict = await guard.allow(ctx);
+  } catch {
+    reply.code(503);
+    void reply.send({
+      error: "upload_guard_unavailable",
+      message: "Replay upload authorization is temporarily unavailable.",
+    });
+    return false;
+  }
+  if (!verdict.allowed) {
+    reply.code(403);
+    void reply.send({
+      error: "upload_denied",
+      message: "Replay upload was not authorized for this session.",
+      ...(verdict.reason ? { reason: verdict.reason } : {}),
+    });
+    return false;
+  }
+  return true;
 }
 
 const REPLAY_CONTENT_TYPE = "application/vnd.resolvetrace.replay+rrweb";
@@ -97,6 +139,16 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
           error: "replay_disabled",
           message: "Replay capture is disabled for this tenant.",
         };
+      }
+
+      const guardCtx: ReplayUploadGuardContext = {
+        tenantId,
+        sessionId: body.sessionId,
+        sequence: body.sequence,
+        leg: "signed-url",
+      };
+      if (!(await passesUploadGuard(opts.replayUploadGuard, guardCtx, reply))) {
+        return reply;
       }
 
       const key = buildKey(tenantId, body.sessionId, body.sequence);
@@ -153,6 +205,18 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
           error: "replay_disabled",
           message: "Replay capture is disabled for this tenant.",
         };
+      }
+
+      // Guard the manifest leg too: an upload URL minted moments before the
+      // deployment's authorization changed must not land a manifest.
+      const guardCtx: ReplayUploadGuardContext = {
+        tenantId,
+        sessionId: body.sessionId,
+        sequence: body.sequence,
+        leg: "complete",
+      };
+      if (!(await passesUploadGuard(opts.replayUploadGuard, guardCtx, reply))) {
+        return reply;
       }
 
       // The key MUST match the server-derived pattern anchored to the caller's

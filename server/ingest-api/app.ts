@@ -168,6 +168,7 @@ export async function buildApp(
     storage: opts.storage,
     replayManifestStore: opts.replayManifestStore,
     settingsRepository: opts.settingsRepository,
+    replayUploadGuard: opts.replayUploadGuard,
     signedUrlTtlSeconds: opts.signedUrlTtlSeconds,
     signedUrlRateLimit: perClassLimits.replay_signed_url,
     completeRateLimit: perClassLimits.replay_complete,
