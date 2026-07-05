@@ -204,7 +204,9 @@ function buildRow(e: PortalSessionEvent): RowContent {
       }
       if (duration) badges.push({ label: duration });
       return {
-        title: "Slow API call",
+        // Emitted for every completed API call (a latency breadcrumb), not only
+        // slow ones — the duration/status badges carry the detail.
+        title: "API call",
         summary: [method, url].filter(Boolean).join(" ") || "(request)",
         badges,
       };
