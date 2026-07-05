@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildTestApp } from "../test-utils/build-test-app.js";
 import { MockResolver } from "../test-utils/mocks.js";
 import { InMemoryReplayManifestStore } from "../in-memory-sinks.js";
@@ -402,5 +402,143 @@ describe("isReplayAllowed (route deny-list matcher)", () => {
   it("denies everything when replay is disabled, regardless of route", () => {
     const policy = { enabled: false, sampleRate: 1, routeDenyList: [] };
     expect(isReplayAllowed(policy, "/dashboard").reason).toBe("replay_disabled");
+  });
+});
+
+describe("replay upload guard (deployment-supplied authorization)", () => {
+  let close: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    if (close) await close();
+    close = undefined;
+  });
+
+  const JSON_HEADERS = {
+    authorization: AUTH_HEADER,
+    "content-type": "application/json",
+  };
+
+  it("allows both legs when the guard says allowed, passing leg context", async () => {
+    const allow = vi.fn(async () => ({ allowed: true as const }));
+    const { app, storage } = await buildTestApp({
+      replayUploadGuard: { allow },
+    });
+    close = () => app.close();
+
+    const signed = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(signed.statusCode).toBe(201);
+
+    storage.putObject(`oss-test-tenant/${VALID_ULID_SESSION}/0.rrweb`, {
+      size: 1024,
+      sha256: VALID_SHA256,
+    });
+    const complete = await app.inject({
+      method: "POST",
+      url: "/v1/replay/complete",
+      headers: JSON_HEADERS,
+      payload: validManifestRequest(),
+    });
+    expect(complete.statusCode).toBe(200);
+
+    expect(allow).toHaveBeenCalledTimes(2);
+    expect(allow).toHaveBeenNthCalledWith(1, {
+      tenantId: "oss-test-tenant",
+      sessionId: VALID_ULID_SESSION,
+      sequence: 0,
+      leg: "signed-url",
+    });
+    expect(allow).toHaveBeenNthCalledWith(2, {
+      tenantId: "oss-test-tenant",
+      sessionId: VALID_ULID_SESSION,
+      sequence: 0,
+      leg: "complete",
+    });
+  });
+
+  it("denies the signed-url leg with 403 upload_denied and mints nothing", async () => {
+    const { app, storage } = await buildTestApp({
+      replayUploadGuard: {
+        allow: async () => ({ allowed: false, reason: "not_authorized" }),
+      },
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      error: "upload_denied",
+      reason: "not_authorized",
+    });
+    expect(storage.signedUrlsMinted).toHaveLength(0);
+  });
+
+  it("denies the complete leg with 403 before any storage or manifest work", async () => {
+    const head = vi.fn();
+    const { app, storage } = await buildTestApp({
+      replayUploadGuard: { allow: async () => ({ allowed: false }) },
+    });
+    close = () => app.close();
+    storage.headObject = head as never;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/complete",
+      headers: JSON_HEADERS,
+      payload: validManifestRequest(),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("upload_denied");
+    expect(head).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with a retryable 503 when the guard throws", async () => {
+    const { app, storage } = await buildTestApp({
+      replayUploadGuard: {
+        allow: async () => {
+          throw new Error("backing store down");
+        },
+      },
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("upload_guard_unavailable");
+    expect(storage.signedUrlsMinted).toHaveLength(0);
+  });
+
+  it("still 403s on tenant policy before the guard runs (policy precedence)", async () => {
+    const allow = vi.fn(async () => ({ allowed: true as const }));
+    const settings = new (await import("../in-memory-sinks.js")).InMemorySettingsRepository();
+    await settings.set("oss-test-tenant", "replay.enabled", "false");
+    const { app } = await buildTestApp({
+      settingsRepository: settings,
+      replayUploadGuard: { allow },
+    });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("replay_disabled");
+    expect(allow).not.toHaveBeenCalled();
   });
 });

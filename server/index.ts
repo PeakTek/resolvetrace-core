@@ -45,6 +45,8 @@ export type {
   AuditRepository,
   SettingsRepository,
   ReplayManifestStore,
+  ReplayUploadGuard,
+  ReplayUploadGuardContext,
   PurgeStore,
   ReadinessCheck,
 } from "./ingest-api/types.js";

@@ -28,6 +28,7 @@ import {
   RateLimitClass,
   ReadinessCheck,
   ReplayManifestStore,
+  ReplayUploadGuard,
   SessionRepository,
   SessionSink,
   SettingsRepository,
@@ -80,6 +81,8 @@ export interface TestAppOverrides<
   webhookHttpClient?: WebhookHttpClient;
   /** Webhook retry/backoff/timeout overrides (e.g. fast/no backoff in tests). */
   webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
+  /** Deployment-supplied replay upload authorization. Defaults to absent. */
+  replayUploadGuard?: ReplayUploadGuard;
 }
 
 export async function buildTestApp<
@@ -139,6 +142,7 @@ export async function buildTestApp<
     rateLimits: overrides.rateLimits,
     webhookHttpClient: overrides.webhookHttpClient,
     webhookDispatchPolicy: overrides.webhookDispatchPolicy,
+    replayUploadGuard: overrides.replayUploadGuard,
     disableRequestLogging: true,
   });
 
