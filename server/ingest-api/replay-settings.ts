@@ -23,12 +23,14 @@
 
 import type { SettingsRepository } from "./types.js";
 
+export const SETTING_REPLAY_MODE = "replay.mode";
 export const SETTING_REPLAY_ENABLED = "replay.enabled";
 export const SETTING_REPLAY_SAMPLE_RATE = "replay.sample_rate";
 export const SETTING_REPLAY_ROUTE_DENY_LIST = "replay.route_deny_list";
 
 /** Defaults when no tenant override is persisted. */
 export const REPLAY_DEFAULTS = {
+  mode: "auto",
   enabled: true,
   sampleRate: 1,
   routeDenyList: [] as string[],
@@ -36,6 +38,14 @@ export const REPLAY_DEFAULTS = {
 
 /** Effective tenant replay policy. */
 export interface ReplaySettingsView {
+  /**
+   * Replay trigger the deployment hands to the SDK. This server is
+   * all-or-nothing: only `'auto'` (record whole sessions) or `'off'` (never).
+   * `'manual'` — recording gated by an external consent trigger — is not
+   * something this server drives, so it never appears here (a persisted
+   * `'manual'` fails safe to `'off'`).
+   */
+  mode: "auto" | "off";
   enabled: boolean;
   /** Float in [0, 1]. */
   sampleRate: number;
@@ -56,6 +66,24 @@ function parseRate(raw: string | undefined, fallback: number): number {
   const n = Number(raw.trim());
   if (!Number.isFinite(n) || n < 0 || n > 1) return fallback;
   return n;
+}
+
+/**
+ * Resolve the persisted replay trigger to the auto/off this server can honor.
+ * Unset or unrecognized values fall back to the default. `'manual'` is
+ * recognized but clamped to `'off'`: manual recording needs an external consent
+ * trigger this server does not provide, so failing safe (record nothing) is
+ * preferable to auto-recording sessions the operator meant to gate.
+ */
+function parseMode(
+  raw: string | undefined,
+  fallback: "auto" | "off"
+): "auto" | "off" {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const v = raw.trim().toLowerCase();
+  if (v === "auto") return "auto";
+  if (v === "off" || v === "manual") return "off";
+  return fallback;
 }
 
 function parseDenyList(raw: string | undefined): string[] {
@@ -86,6 +114,7 @@ export async function resolveReplaySettings(
     .getAll(tenantId)
     .catch(() => ({}) as Record<string, string>);
   return {
+    mode: parseMode(all[SETTING_REPLAY_MODE], REPLAY_DEFAULTS.mode),
     enabled: parseBool(all[SETTING_REPLAY_ENABLED], REPLAY_DEFAULTS.enabled),
     sampleRate: parseRate(
       all[SETTING_REPLAY_SAMPLE_RATE],

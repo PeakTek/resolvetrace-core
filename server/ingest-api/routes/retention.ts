@@ -41,6 +41,7 @@ import {
   REPLAY_DEFAULTS,
   resolveReplaySettings,
   SETTING_REPLAY_ENABLED,
+  SETTING_REPLAY_MODE,
   SETTING_REPLAY_ROUTE_DENY_LIST,
   SETTING_REPLAY_SAMPLE_RATE,
 } from "../replay-settings.js";
@@ -267,11 +268,13 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
       );
       return {
         replay: {
+          mode: view.mode,
           enabled: view.enabled,
           sampleRate: view.sampleRate,
           routeDenyList: view.routeDenyList,
         },
         defaults: {
+          mode: REPLAY_DEFAULTS.mode,
           enabled: REPLAY_DEFAULTS.enabled,
           sampleRate: REPLAY_DEFAULTS.sampleRate,
           routeDenyList: [...REPLAY_DEFAULTS.routeDenyList],
@@ -292,6 +295,26 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
       const body = (request.body ?? {}) as Record<string, unknown>;
       const changed: Record<string, unknown> = {};
       const tenantId = principal.config.tenantId;
+
+      if ("mode" in body) {
+        // This server is all-or-nothing: only 'auto'/'off'. 'manual' recording
+        // needs an external consent trigger this server does not provide, so it
+        // is rejected outright rather than silently downgraded.
+        if (body.mode !== "auto" && body.mode !== "off") {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message:
+              "`mode` must be 'auto' or 'off'. Manual replay requires an external consent trigger this server does not provide.",
+          };
+        }
+        await opts.settingsRepository.set(
+          tenantId,
+          SETTING_REPLAY_MODE,
+          body.mode
+        );
+        changed.mode = body.mode;
+      }
 
       if ("enabled" in body) {
         if (typeof body.enabled !== "boolean") {
@@ -351,7 +374,7 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
         return {
           error: "invalid_request",
           message:
-            "Provide at least one of enabled, sampleRate, routeDenyList.",
+            "Provide at least one of mode, enabled, sampleRate, routeDenyList.",
         };
       }
 
@@ -374,6 +397,7 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
       );
       return {
         replay: {
+          mode: view.mode,
           enabled: view.enabled,
           sampleRate: view.sampleRate,
           routeDenyList: view.routeDenyList,

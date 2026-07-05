@@ -627,10 +627,12 @@ describe("GET/PUT /api/v1/portal/settings/replay (Wave-24)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.replay).toEqual({
+      mode: "auto",
       enabled: true,
       sampleRate: 1,
       routeDenyList: [],
     });
+    expect(body.defaults.mode).toBe("auto");
     expect(body.editable).toBe(true);
   });
 
@@ -652,6 +654,7 @@ describe("GET/PUT /api/v1/portal/settings/replay (Wave-24)", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().replay).toEqual({
+      mode: "auto",
       enabled: false,
       sampleRate: 0.25,
       routeDenyList: ["/checkout", "/admin/*"],
@@ -701,5 +704,56 @@ describe("GET/PUT /api/v1/portal/settings/replay (Wave-24)", () => {
       payload: { enabled: false },
     });
     expect(write.statusCode).toBe(403);
+  });
+
+  it("sets mode to 'off' (persisted) and GET reflects it", async () => {
+    const settings = new InMemorySettingsRepository();
+    const { app } = await buildTestApp({ settingsRepository: settings });
+    close = () => app.close();
+
+    const put = await app.inject({
+      method: "PUT",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+      payload: { mode: "off" },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().replay.mode).toBe("off");
+    expect((await settings.getAll(TENANT))["replay.mode"]).toBe("off");
+
+    const get = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(get.json().replay.mode).toBe("off");
+  });
+
+  it("rejects mode 'manual' with 400 (this server is all-or-nothing)", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+      payload: { mode: "manual" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_request");
+  });
+
+  it("clamps a persisted 'manual' mode to 'off' on read (fail-safe)", async () => {
+    const settings = new InMemorySettingsRepository();
+    await settings.set(TENANT, "replay.mode", "manual");
+    const { app } = await buildTestApp({ settingsRepository: settings });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/settings/replay",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().replay.mode).toBe("off");
   });
 });
