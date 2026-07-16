@@ -1,6 +1,6 @@
 {
   "name": "@peaktek/resolvetrace-core",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "ResolveTrace self-hosted server (OSS, BSL 1.1). Single-tenant core server with ingest, replay, redaction, and portal surfaces.",
   "license": "BUSL-1.1",
   "private": true,
