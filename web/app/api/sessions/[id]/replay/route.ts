@@ -4,6 +4,7 @@ import {
   IngestApiError,
   type PortalReplayManifest,
 } from "@/lib/ingest-api";
+import { segmentReplayEvents } from "@/lib/replay-segments";
 
 /**
  * Server-side proxy for the replay player (Wave-24, Wave-22 token pattern).
@@ -16,16 +17,19 @@ import {
  *      against the internal object-storage endpoint (e.g. http://minio:9000),
  *      which is unreachable — and the signature is host-bound — from the
  *      browser. We fetch the masked rrweb chunk bytes here, parse + stitch them
- *      in sequence order, and return the combined event array to the player.
+ *      in sequence order, then split the stitched stream into per-recording
+ *      segments (one manual `replay.start()`/`stop()` span each) and return
+ *      those to the player.
  *
  * The manifest is fetched fresh on every call, so signed-URL TTL expiry never
  * bites within a single request; the client simply re-requests this route to
  * refresh.
  *
- *   200 + { sessionId, chunkCount, events }  — admin; stitched rrweb events
+ *   200 + { sessionId, chunkCount, segmentCount, segments }
+ *                                             — admin; per-recording rrweb events
  *   403                                       — viewer (token lacks audit:read)
  *   404                                       — unknown session
- *   204 (empty)                               — session has no replay chunks
+ *   204 (empty)                               — session has no playable replay
  *   502                                       — could not reach ingest / storage
  *
  * Privacy: the bytes streamed here are the SDK's masked rrweb events. We only
@@ -100,9 +104,20 @@ export async function GET(
     return NextResponse.json({ error: "chunk_fetch" }, { status: 502 });
   }
 
+  // A session can hold several disjoint capture spans (manual replay: multiple
+  // start/stop). Split the stitched stream into per-recording segments so the
+  // player shows each recording with its own timeline instead of one long
+  // replay whose duration includes the idle time between recordings.
+  const segments = segmentReplayEvents(events);
+  if (segments.length === 0) {
+    // Chunks existed but nothing playable (need Meta + FullSnapshot).
+    return new NextResponse(null, { status: 204 });
+  }
+
   return NextResponse.json({
     sessionId: manifest.sessionId,
     chunkCount: manifest.chunkCount,
-    events,
+    segmentCount: segments.length,
+    segments,
   });
 }
