@@ -370,6 +370,26 @@ describe("POST /api/v1/portal/retention/purge", () => {
     expect(res.json().error).toBe("forbidden");
   });
 
+  it("returns 403 for a read-only engineer (audit:read but no tenant:admin)", async () => {
+    // The scope split: an "engineer" role can read audit + replay (audit:read)
+    // but must NOT run destructive admin ops like purge — that needs the
+    // distinct tenant:admin scope. This is what distinguishes engineer (read)
+    // from admin (destroy) server-side.
+    const resolver = new MockResolver({
+      scopes: ["events:write", "session:read", "audit:read"],
+    });
+    const { app } = await buildTestApp({ resolver, retentionConfig: tinyWindows() });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/retention/purge",
+      headers: { authorization: AUTH_HEADER },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("forbidden");
+  });
+
   it("is tenant-scoped: purges only the caller's tenant", async () => {
     const purgeStore = new InMemoryPurgeStore();
     purgeStore.seedSessions("oss-test-tenant", [

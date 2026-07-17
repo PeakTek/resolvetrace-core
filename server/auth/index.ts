@@ -16,6 +16,12 @@ export type {
   OidcAuthOptions,
   OidcClientLike,
 } from "./oidc.js";
+export {
+  signPortalIdentity,
+  verifyPortalIdentity,
+  defaultScopesForRole,
+} from "./portal-identity.js";
+export type { PortalIdentityClaims } from "./portal-identity.js";
 
 import { createLocalAuthFromEnv } from "./local.js";
 import { createOidcAuthFromEnv } from "./oidc.js";

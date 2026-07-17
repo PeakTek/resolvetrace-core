@@ -32,7 +32,7 @@ import {
   deleteSessionCascade,
   resolveRetentionWindows,
   runPurge,
-  SCOPE_RETENTION_ADMIN,
+  SCOPE_TENANT_ADMIN,
   SETTING_RETENTION_EVENTS_DAYS,
   SETTING_RETENTION_REPLAY_DAYS,
   SETTING_RETENTION_SESSIONS_DAYS,
@@ -127,7 +127,7 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
       reply.code(401).send({ error: "unauthorized", message: "Missing principal." });
       return null;
     }
-    if (!principal.scopes.includes(SCOPE_RETENTION_ADMIN)) {
+    if (!principal.scopes.includes(SCOPE_TENANT_ADMIN)) {
       reply.code(403).send({
         error: "forbidden",
         message: "This operation requires admin privileges.",

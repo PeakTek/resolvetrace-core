@@ -143,7 +143,18 @@ export async function buildApp(
   //          rate-limit tokens; that's intentional. ---
   await fastify.register(authPlugin, {
     resolver: opts.resolver,
-    skipPaths: ["/health", "/ready"],
+    // Portal-auth routes are identity-first (the user authenticates before any
+    // tenant is chosen), so they carry no tenant bearer and skip the resolver.
+    // They authenticate the user themselves (credentials / identity token).
+    skipPaths: [
+      "/health",
+      "/ready",
+      "/api/v1/portal/auth/config",
+      "/api/v1/portal/auth/login",
+      "/api/v1/portal/auth/tenant-select",
+      "/api/v1/portal/auth/session",
+      "/api/v1/portal/auth/logout",
+    ],
   });
 
   // --- Rate limit ---------------------------------------------------------
@@ -198,11 +209,16 @@ export async function buildApp(
     webhookHttpClient: opts.webhookHttpClient,
     webhookDispatchPolicy: opts.webhookDispatchPolicy,
   });
-  // The login route is only meaningful when an auth provider is wired.
+  // The portal-auth contract is only meaningful when an auth provider is wired.
   if (opts.authProvider) {
     await fastify.register(portalAuthRoutes, {
       authProvider: opts.authProvider,
       auditSink: opts.auditSink,
+      membershipProvider: opts.membershipProvider,
+      tenantCredentialMinter: opts.tenantCredentialMinter,
+      portalTokenSecret: opts.portalTokenSecret,
+      defaultPortalTenant: opts.defaultPortalTenant,
+      portalAuthConfig: opts.portalAuthConfig,
       rateLimitOptions: perClassLimits.session,
     });
   }

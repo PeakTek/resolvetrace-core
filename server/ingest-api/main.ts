@@ -182,6 +182,20 @@ async function main(): Promise<void> {
     console.warn("Auth provider not initialised:", (err as Error).message);
   }
 
+  // Surface the single tenant's id + a friendly name in the portal-auth
+  // contract (login response + switcher). Falls back to a generic single tenant
+  // if the resolver can't be probed (e.g. an ingest-only smoke run).
+  let defaultPortalTenant: { id: string; displayName: string } | undefined;
+  try {
+    const t = await resolver.resolveByIngestHost(process.env.INGEST_HOST ?? "");
+    defaultPortalTenant = {
+      id: t.tenantId,
+      displayName: process.env.PORTAL_TENANT_NAME ?? "ResolveTrace",
+    };
+  } catch {
+    /* leave undefined; the contract falls back to a generic single tenant */
+  }
+
   const app = await buildApp({
     resolver,
     storage,
@@ -196,6 +210,7 @@ async function main(): Promise<void> {
     purgeStore,
     retentionConfig,
     authProvider,
+    defaultPortalTenant,
     idempotencyStore,
     readinessChecks,
     corsOrigins,

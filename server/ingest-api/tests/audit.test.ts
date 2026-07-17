@@ -288,6 +288,27 @@ describe("GET /api/v1/portal/audit (admin-only)", () => {
     expect(res.json().error).toBe("forbidden");
   });
 
+  it("returns 200 for a read-only engineer (audit:read, no tenant:admin)", async () => {
+    // The audit-log read is gated by audit:read, which a read-only "engineer"
+    // holds even without the destructive tenant:admin scope. Proves the scope
+    // split lets a read-capable role view audit without admin rights.
+    const auditSink = new InMemoryAuditSink();
+    const resolver = new MockResolver({
+      scopes: ["session:read", "audit:read"],
+    });
+    const { app } = await buildTestApp({ auditSink, resolver });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/audit",
+      headers: { authorization: AUTH_HEADER },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().error).toBeUndefined();
+  });
+
   it("paginates with an opaque cursor", async () => {
     const auditSink = new InMemoryAuditSink();
     const { app, resolver } = await buildTestApp({ auditSink });
