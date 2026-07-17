@@ -58,3 +58,20 @@ export type {
   TenantConfig,
   ApiKeyPrincipal,
 } from "./tenant-resolver/types.js";
+
+// Portal auth providers. A composing server injects one of these (or its own)
+// as buildApp's `authProvider`. Local + OIDC ship here; other managed identity
+// providers are supplied by the composing runtime.
+export {
+  createAuthProvider,
+  LocalAuthProvider,
+  createLocalAuthFromEnv,
+  OidcAuthProvider,
+  createOidcAuthFromEnv,
+} from "./auth/index.js";
+export type {
+  AuthProvider,
+  AuthPrincipal,
+  OidcAuthOptions,
+  OidcClientLike,
+} from "./auth/index.js";

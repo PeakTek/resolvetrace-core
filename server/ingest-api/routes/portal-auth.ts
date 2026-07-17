@@ -131,9 +131,79 @@ export const portalAuthRoutes: FastifyPluginAsync<
     return verifyPortalIdentity(opts.portalTokenSecret, m[1].trim());
   }
 
+  /**
+   * Turn a verified identity principal into the portal login result (tenants +
+   * current tenant + scopes + identity token + minted credential), or a 403
+   * no_tenants outcome. Shared by password login and the OIDC/SSO callback.
+   */
+  async function completeLogin(
+    principal: { userId: string; email: string; roles: string[] },
+    request: FastifyRequest,
+    method: string
+  ): Promise<
+    | { ok: true; result: Record<string, unknown> }
+    | { ok: false; status: number; body: Record<string, unknown> }
+  > {
+    const memberships = await membershipsForUser(principal.userId, principal.roles);
+    if (memberships.length === 0) {
+      return {
+        ok: false,
+        status: 403,
+        body: {
+          error: "no_tenants",
+          message: "This account is not a member of any tenant.",
+        },
+      };
+    }
+    const current = memberships[0]!;
+    const { scopes, ingestCredential } = await scopesAndCredential(
+      principal.userId,
+      current
+    );
+    await recordAudit(
+      opts.auditSink,
+      current.tenantId,
+      { actor: principal.userId, action: AuditAction.AUTH_LOGIN, metadata: { method } },
+      request.log
+    );
+    const identityToken = opts.portalTokenSecret
+      ? signPortalIdentity(
+          opts.portalTokenSecret,
+          { sub: principal.userId, email: principal.email, roles: principal.roles },
+          IDENTITY_TTL_SECONDS
+        )
+      : undefined;
+    return {
+      ok: true,
+      result: {
+        user: {
+          userId: principal.userId,
+          email: principal.email,
+          roles: principal.roles,
+        },
+        tenants: memberships.map((m) => ({
+          id: m.tenantId,
+          displayName: m.displayName,
+        })),
+        currentTenantId: current.tenantId,
+        role: current.role,
+        scopes,
+        ...(identityToken ? { identityToken } : {}),
+        ...(ingestCredential ? { ingestCredential } : {}),
+      },
+    };
+  }
+
   // --- GET config ---------------------------------------------------------
+  // Auto-detect: a provider that supports the OIDC flow ⇒ redirect (SSO) mode;
+  // otherwise a username/password form. A composition can override entirely
+  // via `portalAuthConfig`.
   fastify.get("/api/v1/portal/auth/config", rl, async () => {
-    return opts.portalAuthConfig ?? { mode: "password", providerLabel: "Sign in" };
+    if (opts.portalAuthConfig) return opts.portalAuthConfig;
+    const isOidc = typeof opts.authProvider.beginOidcFlow === "function";
+    return isOidc
+      ? { mode: "redirect", providerLabel: "Sign in with SSO" }
+      : { mode: "password", providerLabel: "Sign in" };
   });
 
   // --- POST login (identity-first) ---------------------------------------
@@ -169,62 +239,63 @@ export const portalAuthRoutes: FastifyPluginAsync<
       return { error: "unauthorized", message: "Invalid username or password." };
     }
 
-    const memberships = await membershipsForUser(
-      principal.userId,
-      principal.roles
-    );
-    if (memberships.length === 0) {
-      reply.code(403);
+    const outcome = await completeLogin(principal, request, "password");
+    if (!outcome.ok) {
+      reply.code(outcome.status);
+      return outcome.body;
+    }
+    return outcome.result;
+  });
+
+  // --- GET authorize (OIDC/SSO redirect mode) ----------------------------
+  // Begins the Authorization Code + PKCE flow; the caller redirects the browser
+  // to `redirectUrl`. 404 when the provider is not a redirect/OIDC one.
+  fastify.get("/api/v1/portal/auth/authorize", rl, async (_request, reply) => {
+    if (typeof opts.authProvider.beginOidcFlow !== "function") {
+      reply.code(404);
       return {
-        error: "no_tenants",
-        message: "This account is not a member of any tenant.",
+        error: "not_supported",
+        message: "This deployment does not use redirect login.",
       };
     }
-    const current = memberships[0]!;
-    const { scopes, ingestCredential } = await scopesAndCredential(
-      principal.userId,
-      current
-    );
+    const begun = await opts.authProvider.beginOidcFlow();
+    return { redirectUrl: begun.redirectUrl, state: begun.state };
+  });
 
-    await recordAudit(
-      opts.auditSink,
-      current.tenantId,
-      {
-        actor: principal.userId,
-        action: AuditAction.AUTH_LOGIN,
-        metadata: { method: "password" },
-      },
-      request.log
-    );
-
-    const identityToken = opts.portalTokenSecret
-      ? signPortalIdentity(
-          opts.portalTokenSecret,
-          {
-            sub: principal.userId,
-            email: principal.email,
-            roles: principal.roles,
-          },
-          IDENTITY_TTL_SECONDS
-        )
-      : undefined;
-
-    return {
-      user: {
-        userId: principal.userId,
-        email: principal.email,
-        roles: principal.roles,
-      },
-      tenants: memberships.map((m) => ({
-        id: m.tenantId,
-        displayName: m.displayName,
-      })),
-      currentTenantId: current.tenantId,
-      role: current.role,
-      scopes,
-      ...(identityToken ? { identityToken } : {}),
-      ...(ingestCredential ? { ingestCredential } : {}),
-    };
+  // --- POST callback (OIDC/SSO return leg) -------------------------------
+  // The portal forwards the `{code, state}` the IdP handed back; we exchange
+  // them for an identity and complete login exactly like the password path.
+  fastify.post("/api/v1/portal/auth/callback", rl, async (request, reply) => {
+    if (typeof opts.authProvider.completeOidcFlow !== "function") {
+      reply.code(404);
+      return { error: "not_supported" };
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const code = body["code"];
+    const state = body["state"];
+    if (typeof code !== "string" || typeof state !== "string") {
+      reply.code(400);
+      return { error: "invalid_request", message: "`code` and `state` are required." };
+    }
+    let principal;
+    try {
+      principal = await opts.authProvider.completeOidcFlow({ code, state });
+    } catch {
+      await recordAudit(
+        opts.auditSink,
+        auditTenantForAnon,
+        { actor: "oidc", action: AuditAction.AUTH_LOGIN_FAILED, metadata: { method: "oidc" } },
+        request.log
+      );
+      reply.code(401);
+      return { error: "unauthorized", message: "SSO sign-in failed." };
+    }
+    const outcome = await completeLogin(principal, request, "oidc");
+    if (!outcome.ok) {
+      reply.code(outcome.status);
+      return outcome.body;
+    }
+    return outcome.result;
   });
 
   // --- POST tenant-select ------------------------------------------------

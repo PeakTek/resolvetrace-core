@@ -151,6 +151,8 @@ export async function buildApp(
       "/ready",
       "/api/v1/portal/auth/config",
       "/api/v1/portal/auth/login",
+      "/api/v1/portal/auth/authorize",
+      "/api/v1/portal/auth/callback",
       "/api/v1/portal/auth/tenant-select",
       "/api/v1/portal/auth/session",
       "/api/v1/portal/auth/logout",
