@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createIngestApiClient, IngestApiError } from "@/lib/ingest-api";
+import { IngestApiError } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 /**
  * Server-side proxy for the admin "Send test" webhook action (Wave-25). Holds
@@ -14,7 +15,7 @@ import { createIngestApiClient, IngestApiError } from "@/lib/ingest-api";
  *   502                                                   — could not reach the ingest API
  */
 export async function POST() {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.testWebhook();
     if (result.status === "forbidden") {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createIngestApiClient, IngestApiError } from "@/lib/ingest-api";
+import { IngestApiError } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 /**
  * Server-side proxy for the admin audit log. The client-side "load more"
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
   const cursor = url.searchParams.get("cursor") ?? undefined;
   const limit = limitRaw ? Number(limitRaw) : undefined;
 
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.listAudit({
       limit: limit && Number.isFinite(limit) ? limit : undefined,

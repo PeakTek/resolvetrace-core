@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalReplayManifest,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 import { segmentReplayEvents } from "@/lib/replay-segments";
 
 /**
@@ -40,7 +40,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
 
   let manifestResult;
   try {

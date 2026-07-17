@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalRetentionWindows,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 /**
  * Server-side proxy for retention settings. Holds the privileged ingest token
@@ -17,7 +17,7 @@ import {
  *   502                  — could not reach the ingest API
  */
 export async function GET() {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.getRetentionSettings();
     if (result.status === "forbidden") {
@@ -68,7 +68,7 @@ export async function PUT(request: Request) {
     );
   }
 
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.updateRetentionSettings(windows);
     if (result.status === "forbidden") {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createIngestApiClient, IngestApiError } from "@/lib/ingest-api";
+import { IngestApiError } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 /**
  * Server-side proxy for the support-code lookup. The client-side search box
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid" }, { status: 400 });
   }
 
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.lookupBySupportCode(code);
     if (result.status === "invalid") {
