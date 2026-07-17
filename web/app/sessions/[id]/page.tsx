@@ -7,11 +7,13 @@ import { ReplayBadge } from "@/components/replay/replay-badge";
 import { SupportCodeBadge } from "@/components/support-code-badge";
 import { DeleteSession } from "@/components/delete-session";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalSessionDetailResponse,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 import { formatRelative } from "@/lib/format";
+import { getSession } from "@/lib/session-cookie";
+import { hasScope, SCOPE_TENANT_ADMIN } from "@/lib/scopes";
 
 /**
  * The SDK caps auto-captured events per session (default 200). When the
@@ -27,7 +29,7 @@ type LoadResult =
   | { status: "error"; baseUrl: string };
 
 async function loadSession(id: string): Promise<LoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const data = await client.getSession(id);
     if (data === null) return { status: "notFound" };
@@ -67,13 +69,13 @@ export default async function SessionDetailPage({
 }) {
   const { id } = await params;
   const result = await loadSession(id);
-  // Render the destructive delete control only when this deployment's portal
-  // token is admin-scoped. The server enforces the scope on the DELETE itself
-  // regardless; this just hides the control from viewer deployments.
+  // Render the destructive delete control only when the signed-in user's role
+  // carries the tenant-admin scope. The server enforces the scope on the DELETE
+  // itself regardless; this just hides the control from non-admin roles.
+  const portalSession = await getSession();
   const canDelete =
-    result.status === "ok"
-      ? await createIngestApiClient().isAdmin()
-      : false;
+    result.status === "ok" &&
+    hasScope(portalSession?.scopes ?? [], SCOPE_TENANT_ADMIN);
 
   if (result.status === "error") {
     return (

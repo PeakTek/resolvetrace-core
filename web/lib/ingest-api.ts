@@ -306,14 +306,6 @@ export interface IngestApiClient {
   listReports(opts?: {
     sessionScan?: number;
   }): Promise<AdminResult<PortalReport[]>>;
-  /**
-   * Whether this deployment's portal token carries the admin scope. Used to
-   * decide whether to render admin-only controls (e.g. delete-session) — the
-   * server still enforces the scope on every mutation regardless. Probes a
-   * cheap read-only admin endpoint; on a transport error we fail closed
-   * (return false) so the control is hidden rather than shown-then-403.
-   */
-  isAdmin(): Promise<boolean>;
 }
 
 export class IngestApiError extends Error {
@@ -334,10 +326,14 @@ function trimTrailingSlash(url: string): string {
 }
 
 export function createIngestApiClient(
-  env: NodeJS.ProcessEnv = process.env
+  opts: { baseUrl?: string; bearer?: string } = {}
 ): IngestApiClient {
-  const baseUrl = trimTrailingSlash(env.RT_INGEST_URL ?? DEFAULT_INGEST_URL);
-  const token = env.RT_PORTAL_API_TOKEN ?? "";
+  const baseUrl = trimTrailingSlash(
+    opts.baseUrl ?? process.env.RT_INGEST_URL ?? DEFAULT_INGEST_URL
+  );
+  // The per-tenant portal credential when the session carries one (managed),
+  // else the deployment's static portal token (OSS single-tenant).
+  const token = opts.bearer ?? process.env.RT_PORTAL_API_TOKEN ?? "";
 
   async function request<T>(path: string): Promise<T | { __notFound: true }> {
     let response: Response;
@@ -655,17 +651,6 @@ export function createIngestApiClient(
         x.capturedAt < y.capturedAt ? 1 : x.capturedAt > y.capturedAt ? -1 : 0
       );
       return { status: "ok" as const, data: reports };
-    },
-    async isAdmin() {
-      try {
-        const result = await adminRequest<unknown>(
-          "GET",
-          `/api/v1/portal/settings/retention`
-        );
-        return result.status === "ok";
-      } catch {
-        return false;
-      }
     },
   };
 }

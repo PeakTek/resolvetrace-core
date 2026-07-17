@@ -2,10 +2,10 @@ import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { AuditTable } from "@/components/audit-table";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalAuditPage,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 type LoadResult =
   | { status: "ok"; data: PortalAuditPage }
@@ -13,7 +13,7 @@ type LoadResult =
   | { status: "error"; baseUrl: string };
 
 async function loadAudit(): Promise<LoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.listAudit({ limit: 50 });
     if (result.status === "forbidden") return { status: "forbidden" };

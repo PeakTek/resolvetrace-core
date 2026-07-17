@@ -5,10 +5,10 @@ import { SupportCodeLookup } from "@/components/support-code-lookup";
 import { DeletedToast } from "@/components/deleted-toast";
 import { ReplayBadge } from "@/components/replay/replay-badge";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalSessionListResponse,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 import { formatRelative, formatSupportCode } from "@/lib/format";
 
 type LoadResult =
@@ -16,7 +16,7 @@ type LoadResult =
   | { status: "error"; baseUrl: string };
 
 async function loadSessions(): Promise<LoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const data = await client.listSessions({ limit: 50 });
     return { status: "ok", data };

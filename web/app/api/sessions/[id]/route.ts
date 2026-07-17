@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createIngestApiClient, IngestApiError } from "@/lib/ingest-api";
+import { IngestApiError } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 /**
  * Server-side proxy for targeted session deletion / erasure (Law-25). Holds
@@ -17,7 +18,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.deleteSession(id);
     if (result.status === "forbidden") {

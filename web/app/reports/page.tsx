@@ -2,10 +2,10 @@ import Link from "next/link";
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalReport,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 import { formatRelative, formatSupportCode } from "@/lib/format";
 
 /**
@@ -25,7 +25,7 @@ type LoadResult =
   | { status: "error"; baseUrl: string };
 
 async function loadReports(): Promise<LoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.listReports();
     if (result.status === "forbidden") return { status: "forbidden" };

@@ -4,11 +4,11 @@ import { RetentionForm } from "@/components/retention-form";
 import { PurgeButton } from "@/components/purge-button";
 import { WebhookForm } from "@/components/webhook-form";
 import {
-  createIngestApiClient,
   IngestApiError,
   type PortalRetentionSettings,
   type PortalWebhookSettings,
 } from "@/lib/ingest-api";
+import { portalIngestClient } from "@/lib/portal-client";
 
 type LoadResult =
   | { status: "ok"; data: PortalRetentionSettings }
@@ -21,7 +21,7 @@ type WebhookLoadResult =
   | { status: "error" };
 
 async function loadSettings(): Promise<LoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.getRetentionSettings();
     if (result.status === "forbidden") return { status: "forbidden" };
@@ -38,7 +38,7 @@ async function loadSettings(): Promise<LoadResult> {
 }
 
 async function loadWebhook(): Promise<WebhookLoadResult> {
-  const client = createIngestApiClient();
+  const client = await portalIngestClient();
   try {
     const result = await client.getWebhookSettings();
     if (result.status === "forbidden") return { status: "forbidden" };
