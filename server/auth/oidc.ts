@@ -206,26 +206,59 @@ async function defaultDiscoverer(opts: {
   clientSecret: string;
   redirectUrl: string;
 }): Promise<OidcClientLike> {
-  // Late dynamic import so tests can run without the dependency installed.
-  const mod = (await import("openid-client")) as unknown as {
-    Issuer: {
-      discover(url: string): Promise<{
-        Client: new (cfg: {
-          client_id: string;
-          client_secret: string;
-          redirect_uris: string[];
-          response_types: string[];
-        }) => OidcClientLike;
-      }>;
-    };
+  // Late dynamic import so tests + non-OIDC deployments don't need the library
+  // loaded. openid-client v6 is a functional API (no Issuer/Client classes); we
+  // adapt it to the narrow `OidcClientLike` shape this module consumes.
+  const client = (await import("openid-client")) as unknown as {
+    discovery(
+      url: URL,
+      clientId: string,
+      clientSecret: string
+    ): Promise<unknown>;
+    buildAuthorizationUrl(config: unknown, params: Record<string, string>): URL;
+    authorizationCodeGrant(
+      config: unknown,
+      currentUrl: URL,
+      checks: { expectedState?: string; pkceCodeVerifier?: string }
+    ): Promise<{ claims(): Record<string, unknown> | undefined }>;
   };
-  const issuer = await mod.Issuer.discover(opts.issuerUrl);
-  return new issuer.Client({
-    client_id: opts.clientId,
-    client_secret: opts.clientSecret,
-    redirect_uris: [opts.redirectUrl],
-    response_types: ["code"],
-  });
+  const config = await client.discovery(
+    new URL(opts.issuerUrl),
+    opts.clientId,
+    opts.clientSecret
+  );
+  return {
+    authorizationUrl(params) {
+      return client
+        .buildAuthorizationUrl(config, {
+          redirect_uri: params.redirect_uri,
+          scope: params.scope,
+          state: params.state,
+          code_challenge: params.code_challenge,
+          code_challenge_method: params.code_challenge_method,
+        })
+        .href;
+    },
+    async callback(redirectUri, params, checks) {
+      const currentUrl = new URL(redirectUri);
+      currentUrl.searchParams.set("code", params.code);
+      currentUrl.searchParams.set("state", params.state);
+      const tokens = await client.authorizationCodeGrant(config, currentUrl, {
+        expectedState: checks.state,
+        pkceCodeVerifier: checks.code_verifier,
+      });
+      const c = tokens.claims() ?? {};
+      const rolesClaim = c["roles"];
+      return {
+        claims: () => ({
+          sub: String(c["sub"] ?? ""),
+          email:
+            typeof c["email"] === "string" ? (c["email"] as string) : undefined,
+          roles: Array.isArray(rolesClaim) ? (rolesClaim as string[]) : undefined,
+        }),
+      };
+    },
+  };
 }
 
 function randomToken(bytes = 32): string {

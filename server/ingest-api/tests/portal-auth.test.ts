@@ -10,9 +10,11 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { buildTestApp } from "../test-utils/build-test-app.js";
+import { OidcAuthProvider } from "../../auth/index.js";
 import type {
   AuthProvider,
   MembershipProvider,
+  OidcClientLike,
   PortalTenantMembership,
   TenantCredentialMinter,
 } from "../../auth/index.js";
@@ -233,5 +235,87 @@ describe("portal-auth login (OSS single-tenant fallback)", () => {
     expect(body.ingestCredential).toBeUndefined();
     // No portalTokenSecret → no identity token needed for a single tenant.
     expect(body.identityToken).toBeUndefined();
+  });
+});
+
+describe("portal-auth OIDC/SSO redirect flow", () => {
+  // A mock OIDC client: authorizationUrl echoes the state; callback returns a
+  // fixed identity. The real openid-client is never touched.
+  const oidcClient: OidcClientLike = {
+    authorizationUrl(params) {
+      return `https://idp.test/authorize?state=${params.state}&cc=${params.code_challenge}`;
+    },
+    async callback() {
+      return {
+        claims: () => ({
+          sub: "oidc-user-1",
+          email: "sso@example.test",
+          roles: ["member"],
+        }),
+      };
+    },
+  };
+
+  function buildOidc() {
+    const provider = new OidcAuthProvider({
+      client: oidcClient,
+      redirectUrl: "https://portal.test/api/auth/callback",
+    });
+    return buildTestApp({
+      authProvider: provider,
+      defaultPortalTenant: { id: "oss", displayName: "SSO Workspace" },
+    });
+  }
+
+  it("config reports redirect mode for an OIDC provider", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+    const res = await app.inject({ method: "GET", url: "/api/v1/portal/auth/config" });
+    expect(res.json().mode).toBe("redirect");
+  });
+
+  it("authorize returns a redirect URL + state; callback with that state logs in", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+
+    const authz = await app.inject({ method: "GET", url: "/api/v1/portal/auth/authorize" });
+    expect(authz.statusCode).toBe(200);
+    const { redirectUrl, state } = authz.json();
+    expect(redirectUrl).toContain("https://idp.test/authorize");
+    expect(typeof state).toBe("string");
+
+    const cb = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/callback",
+      payload: { code: "auth-code", state },
+    });
+    expect(cb.statusCode, cb.body).toBe(200);
+    const body = cb.json();
+    // OidcAuthProvider namespaces the subject as `oidc:<sub>`.
+    expect(body.user.userId).toBe("oidc:oidc-user-1");
+    expect(body.tenants).toEqual([{ id: "oss", displayName: "SSO Workspace" }]);
+  });
+
+  it("callback with an unknown/expired state is 401", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+    const cb = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/callback",
+      payload: { code: "x", state: "never-issued" },
+    });
+    expect(cb.statusCode).toBe(401);
+  });
+
+  it("password-mode provider 404s the OIDC endpoints", async () => {
+    const passwordAuth: AuthProvider = {
+      async verifyCredentials() {
+        return null;
+      },
+    };
+    const { app } = await buildTestApp({ authProvider: passwordAuth });
+    close = () => app.close();
+    const authz = await app.inject({ method: "GET", url: "/api/v1/portal/auth/authorize" });
+    expect(authz.statusCode).toBe(404);
   });
 });
