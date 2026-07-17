@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { buildSession } from "@/lib/session";
 import { setSessionCookie } from "@/lib/session-cookie";
+import {
+  INGEST_BASE,
+  sessionFromLoginResult,
+  type PortalLoginResult,
+} from "@/lib/portal-login";
 
 /**
  * Portal login exchange. Verifies credentials against the ingest portal-auth
@@ -8,11 +12,6 @@ import { setSessionCookie } from "@/lib/session-cookie";
  * scopes (+ any managed per-tenant credential) into the encrypted session
  * cookie. The privileged bearer never reaches the browser.
  */
-
-const INGEST = (process.env.RT_INGEST_URL ?? "http://resolvetrace:4317").replace(
-  /\/$/,
-  ""
-);
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -24,7 +23,7 @@ export async function POST(request: Request) {
 
   let res: Response;
   try {
-    res = await fetch(`${INGEST}/api/v1/portal/auth/login`, {
+    res = await fetch(`${INGEST_BASE}/api/v1/portal/auth/login`, {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
@@ -45,28 +44,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "upstream" }, { status: 502 });
   }
 
-  const data = (await res.json()) as {
-    user: { userId: string; email: string; roles: string[] };
-    tenants: { id: string; displayName: string }[];
-    currentTenantId: string;
-    role?: string;
-    scopes?: string[];
-    identityToken?: string;
-    ingestCredential?: { credential: string; expiresAt: number };
-  };
-
-  const session = buildSession({
-    sub: data.user.userId,
-    email: data.user.email,
-    roles: data.user.roles ?? [],
-    tenants: data.tenants ?? [],
-    currentTenantId: data.currentTenantId,
-    role: data.role ?? "",
-    scopes: data.scopes ?? [],
-    identityToken: data.identityToken,
-    ingestBearer: data.ingestCredential?.credential,
-    ingestBearerExp: data.ingestCredential?.expiresAt,
-  });
-  await setSessionCookie(session);
+  const data = (await res.json()) as PortalLoginResult;
+  await setSessionCookie(sessionFromLoginResult(data));
   return NextResponse.json({ ok: true });
 }
