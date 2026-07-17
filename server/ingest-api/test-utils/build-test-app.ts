@@ -41,7 +41,12 @@ import type {
   WebhookDispatchPolicy,
   WebhookHttpClient,
 } from "../webhook-dispatch.js";
-import type { AuthProvider } from "../../auth/index.js";
+import type {
+  AuthProvider,
+  MembershipProvider,
+  TenantCredentialMinter,
+  PortalAuthConfig,
+} from "../../auth/index.js";
 
 export interface TestAppOverrides<
   ES extends EventSink = InMemoryEventSink,
@@ -74,6 +79,19 @@ export interface TestAppOverrides<
   /** Retention config. Defaults to env-loaded (all "keep forever" in tests). */
   retentionConfig?: RetentionConfig;
   authProvider?: AuthProvider;
+  /** Multi-tenant portal: user→tenants+role resolver. */
+  membershipProvider?: MembershipProvider;
+  /** Multi-tenant portal: per-tenant credential minter. */
+  tenantCredentialMinter?: TenantCredentialMinter;
+  /** HMAC secret for the portal identity token. */
+  portalTokenSecret?: string;
+  /**
+   * OSS single-tenant descriptor for the portal-auth contract. Defaults to the
+   * resolver's tenant id so login audits land under the same tenant the rest of
+   * the suite asserts on.
+   */
+  defaultPortalTenant?: { id: string; displayName: string };
+  portalAuthConfig?: PortalAuthConfig;
   idempotencyStore?: InMemoryIdempotencyStore;
   readinessChecks?: ReadinessCheck[];
   rateLimits?: Partial<Record<RateLimitClass, RateLimitBudget>>;
@@ -137,6 +155,20 @@ export async function buildTestApp<
     purgeStore,
     retentionConfig,
     authProvider: overrides.authProvider,
+    membershipProvider: overrides.membershipProvider,
+    tenantCredentialMinter: overrides.tenantCredentialMinter,
+    portalTokenSecret: overrides.portalTokenSecret,
+    // Default the single synthetic portal tenant to the resolver's tenant so
+    // portal-auth login audits land under the tenant the suite asserts on.
+    // Some tests inject a foreign-realm resolver double without `.config`.
+    defaultPortalTenant:
+      overrides.defaultPortalTenant ?? {
+        id:
+          (resolver as { config?: { tenantId?: string } }).config?.tenantId ??
+          "oss-test-tenant",
+        displayName: "Test Tenant",
+      },
+    portalAuthConfig: overrides.portalAuthConfig,
     idempotencyStore,
     readinessChecks: overrides.readinessChecks,
     rateLimits: overrides.rateLimits,

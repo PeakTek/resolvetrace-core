@@ -41,8 +41,10 @@ export interface MockResolverOptions {
   env?: Environment;
   /**
    * Scopes granted to the resolved principal. Defaults to the OSS admin set
-   * including `audit:read`. Pass a set WITHOUT `audit:read` to simulate a
-   * viewer for RBAC tests on the audit endpoint.
+   * including `audit:read` (read audit/replay) and `tenant:admin` (destructive
+   * admin). Pass a set WITHOUT `audit:read` to simulate a viewer, or one with
+   * `audit:read` but WITHOUT `tenant:admin` to simulate a read-only engineer
+   * for RBAC tests that distinguish read from destructive admin.
    */
   scopes?: string[];
 }
@@ -74,6 +76,7 @@ export class MockResolver implements TenantConfigResolver {
       "replay:write",
       "session:read",
       "audit:read",
+      "tenant:admin",
     ];
   }
 

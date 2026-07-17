@@ -31,8 +31,18 @@ export const SETTING_RETENTION_EVENTS_DAYS = "retention.events_days";
 export const SETTING_RETENTION_SESSIONS_DAYS = "retention.sessions_days";
 export const SETTING_RETENTION_REPLAY_DAYS = "retention.replay_days";
 
-/** Scope that authorizes mutating retention/state and running a purge. */
-export const SCOPE_RETENTION_ADMIN = "audit:read";
+/**
+ * Scope that authorizes tenant-admin operations: mutating retention / replay /
+ * webhook settings, running a purge, and targeted session deletion.
+ *
+ * Distinct from `audit:read` (read-only audit-log + replay access). Splitting
+ * the two lets a read-capable role (e.g. an "engineer") view audit + replay
+ * without holding destructive admin rights, while an "admin" role carries both.
+ * The role -> scope mapping is owned by the tenant resolver / portal; routes
+ * here only check the scope. (The OSS single-tenant principal is granted this
+ * scope by default — see `SingleTenantResolver` `DEFAULT_SCOPES`.)
+ */
+export const SCOPE_TENANT_ADMIN = "tenant:admin";
 
 /** Counts returned from a purge run, per data class. */
 export interface PurgeCounts {

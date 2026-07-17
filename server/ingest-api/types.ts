@@ -8,7 +8,12 @@
 
 import { ObjectStorage } from "../storage/index.js";
 import { TenantConfigResolver } from "../tenant-resolver/index.js";
-import type { AuthProvider } from "../auth/index.js";
+import type {
+  AuthProvider,
+  MembershipProvider,
+  TenantCredentialMinter,
+  PortalAuthConfig,
+} from "../auth/index.js";
 import type { RetentionConfig } from "./retention-config.js";
 import type {
   WebhookDispatchPolicy,
@@ -565,9 +570,40 @@ export interface IngestApiDependencies {
   retentionConfig: RetentionConfig;
   /**
    * Optional auth provider backing the portal login endpoint. When absent the
-   * login route is not registered (e.g. an ingest-only deployment).
+   * portal-auth routes are not registered (e.g. an ingest-only deployment).
    */
   authProvider?: AuthProvider;
+  /**
+   * Optional user→tenant membership resolver (multi-tenant portal). When
+   * present, portal login resolves the user's tenants + role from it; when
+   * absent, the portal-auth contract falls back to one synthetic tenant with
+   * the user's own role (OSS single-tenant).
+   */
+  membershipProvider?: MembershipProvider;
+  /**
+   * Optional per-tenant credential minter (multi-tenant portal). When present,
+   * login / tenant-select mint a short-lived, role-scoped tenant key the portal
+   * uses server-side to call the data plane; when absent, the deployment's
+   * static portal token is used (OSS single-tenant).
+   */
+  tenantCredentialMinter?: TenantCredentialMinter;
+  /**
+   * HMAC secret for the portal identity token that carries the authenticated
+   * subject across the login→tenant-select hop. Required when a
+   * `membershipProvider` is injected; unused in OSS single-tenant.
+   */
+  portalTokenSecret?: string;
+  /**
+   * Descriptor for the single synthetic tenant surfaced by the portal-auth
+   * contract in OSS single-tenant mode (no `membershipProvider`). Defaults to
+   * `{ id: "default", displayName: "Default" }`.
+   */
+  defaultPortalTenant?: { id: string; displayName: string };
+  /**
+   * Capability descriptor returned by the portal-auth `config` probe. Defaults
+   * to `{ mode: "password", providerLabel: "Sign in" }`.
+   */
+  portalAuthConfig?: PortalAuthConfig;
   /**
    * Idempotency store. Implementations back this with an in-memory LRU or a
    * Redis instance depending on env.
