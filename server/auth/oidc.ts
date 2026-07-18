@@ -41,7 +41,7 @@ export interface OidcClientLike {
 
   callback(
     redirectUri: string,
-    params: { code: string; state: string },
+    params: { code: string; state: string; iss?: string },
     checks: { state: string; code_verifier: string }
   ): Promise<{
     claims(): {
@@ -129,7 +129,13 @@ export class OidcAuthProvider implements AuthProvider {
 
     const tokenSet = await this.client.callback(
       this.redirectUrl,
-      { code: params.code, state: params.state },
+      {
+        code: params.code,
+        state: params.state,
+        // RFC 9207: forward the issuer identifier when present — clients
+        // validate it, and may reject the response without it.
+        ...(params.iss ? { iss: params.iss } : {}),
+      },
       { state: pending.state, code_verifier: pending.codeVerifier }
     );
     const claims = tokenSet.claims();
@@ -243,6 +249,11 @@ async function defaultDiscoverer(opts: {
       const currentUrl = new URL(redirectUri);
       currentUrl.searchParams.set("code", params.code);
       currentUrl.searchParams.set("state", params.state);
+      // RFC 9207: when the server metadata advertises
+      // `authorization_response_iss_parameter_supported`, openid-client
+      // REQUIRES the `iss` response parameter — dropping it fails the
+      // exchange before any token request.
+      if (params.iss) currentUrl.searchParams.set("iss", params.iss);
       const tokens = await client.authorizationCodeGrant(config, currentUrl, {
         expectedState: checks.state,
         pkceCodeVerifier: checks.code_verifier,

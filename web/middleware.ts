@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, openSession } from "@/lib/session";
+import { publicOrigin } from "@/lib/public-origin";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -28,8 +29,9 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const url = request.nextUrl.clone();
-  url.pathname = "/login";
+  // Build the redirect from the PUBLIC origin — behind a reverse proxy the
+  // request's own URL can be the container's internal listen address.
+  const url = new URL("/login", publicOrigin(request));
   url.searchParams.set("next", pathname);
   return NextResponse.redirect(url);
 }
