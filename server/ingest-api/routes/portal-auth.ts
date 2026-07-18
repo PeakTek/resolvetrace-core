@@ -273,13 +273,20 @@ export const portalAuthRoutes: FastifyPluginAsync<
     const body = (request.body ?? {}) as Record<string, unknown>;
     const code = body["code"];
     const state = body["state"];
+    // RFC 9207 issuer identifier — optional on the wire, but must reach the
+    // provider verbatim when present (clients validate it).
+    const iss = typeof body["iss"] === "string" ? body["iss"] : undefined;
     if (typeof code !== "string" || typeof state !== "string") {
       reply.code(400);
       return { error: "invalid_request", message: "`code` and `state` are required." };
     }
     let principal;
     try {
-      principal = await opts.authProvider.completeOidcFlow({ code, state });
+      principal = await opts.authProvider.completeOidcFlow({
+        code,
+        state,
+        ...(iss ? { iss } : {}),
+      });
     } catch {
       await recordAudit(
         opts.auditSink,

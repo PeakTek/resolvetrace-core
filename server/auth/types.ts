@@ -35,6 +35,12 @@ export interface OidcBeginResult {
 export interface OidcCompleteParams {
   code: string;
   state: string;
+  /**
+   * RFC 9207 issuer identifier, when the IdP includes it on the redirect.
+   * Callers should pass it through verbatim: OIDC clients validate it and may
+   * REJECT the response without it when the IdP advertises support.
+   */
+  iss?: string;
 }
 
 /**

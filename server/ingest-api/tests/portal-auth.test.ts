@@ -239,13 +239,15 @@ describe("portal-auth login (OSS single-tenant fallback)", () => {
 });
 
 describe("portal-auth OIDC/SSO redirect flow", () => {
-  // A mock OIDC client: authorizationUrl echoes the state; callback returns a
-  // fixed identity. The real openid-client is never touched.
+  // A mock OIDC client: authorizationUrl echoes the state; callback records its
+  // params and returns a fixed identity. The real openid-client is never touched.
+  let lastCallbackParams: { code: string; state: string; iss?: string } | undefined;
   const oidcClient: OidcClientLike = {
     authorizationUrl(params) {
       return `https://idp.test/authorize?state=${params.state}&cc=${params.code_challenge}`;
     },
-    async callback() {
+    async callback(_redirectUri, params) {
+      lastCallbackParams = params;
       return {
         claims: () => ({
           sub: "oidc-user-1",
@@ -294,6 +296,25 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
     // OidcAuthProvider namespaces the subject as `oidc:<sub>`.
     expect(body.user.userId).toBe("oidc:oidc-user-1");
     expect(body.tenants).toEqual([{ id: "oss", displayName: "SSO Workspace" }]);
+  });
+
+  it("forwards the RFC 9207 iss parameter to the OIDC client verbatim", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+    lastCallbackParams = undefined;
+
+    const authz = await app.inject({ method: "GET", url: "/api/v1/portal/auth/authorize" });
+    const { state } = authz.json();
+    const cb = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/callback",
+      payload: { code: "auth-code", state, iss: "https://idp.test/realms/rt" },
+    });
+
+    expect(cb.statusCode, cb.body).toBe(200);
+    // Clients validate iss (and may reject the response without it), so it must
+    // reach the OIDC client exactly as the IdP sent it.
+    expect(lastCallbackParams?.iss).toBe("https://idp.test/realms/rt");
   });
 
   it("callback with an unknown/expired state is 401", async () => {
