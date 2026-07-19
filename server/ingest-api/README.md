@@ -98,31 +98,26 @@ single configured API key, so a one-key install gets the full quota.
 the 202 response. A batch that is entirely duplicates is signalled via the
 `X-Idempotent-Replay: true` response header.
 
-## Known gaps (Wave 4)
+## Pluggable adapters
 
-These are intentional placeholders that ship "good enough" behaviour for
-local development and the contract conformance harness. Each is replaced
-with the production wiring in a follow-up wave.
+The server is built around injectable sinks/stores (interfaces in `types.ts`),
+so the same HTTP surface runs from in-memory defaults (tests, the conformance
+harness) up to durable backends selected by env:
 
-- **Event sink.** Accepted batches are enqueued to an in-process queue
-  (`InMemoryEventSink`). They are not yet written to Postgres. The queue is
-  retained for the lifetime of the process; no consumer drains it. Swap in a
-  durable sink by implementing `EventSink` in `types.ts`.
+- **Event + session sinks.** Default to Postgres (`PostgresEventSink` /
+  `PostgresSessionSink`, schema in `migrations/`) when a database is configured;
+  the in-memory sinks (`InMemoryEventSink`/`InMemorySessionSink`) back the test
+  and no-DB paths. `POST /v1/events` persists accepted batches; the portal reads
+  them back as live data.
+- **Idempotency store.** In-memory LRU by default; when `REDIS_URL` is set the
+  Redis-backed store is used (required for multi-node dedup correctness).
+- **Replay checksum verification.** When the object store reports a
+  `ChecksumSHA256` (S3 checksum mode / MinIO configured for it), it is compared
+  against the manifest; otherwise the server records the client-asserted digest
+  as the manifest sha256. Full body-download re-verification is out of scope for
+  the ingest path.
 
-- **Session sink.** Session start / end records are stored in-memory
-  (`InMemorySessionSink`). Same swap-in path as above.
-
-- **Idempotency store.** Defaults to an in-memory LRU. When `REDIS_URL` is
-  set, a Redis-backed implementation will replace it (multi-node correctness
-  requires this). The Wave 4 build still uses in-memory regardless of
-  `REDIS_URL`; the swap lands when the event-processing pipeline does.
-
-- **Replay checksum verification.** When the underlying object store reports
-  a `ChecksumSHA256` (S3 with the new checksum mode, MinIO with the
-  appropriate config), it is compared against the manifest. Otherwise the
-  server accepts the client-asserted digest as the manifest sha256.
-  Body-download verification will be added when the replay processing
-  pipeline lands.
+See [deploy/README.md](../../deploy/README.md) for wiring these via env.
 
 ## Running the tests
 

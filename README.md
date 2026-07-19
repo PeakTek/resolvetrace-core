@@ -2,25 +2,22 @@
 
 Single-tenant, self-hosted ResolveTrace server.
 
-## Status
-
-Bootstrap repository. Documentation and code will grow here as the open-source server is implemented.
-
 ## Purpose
 
-`resolvetrace-core` is the public, self-hosted server distribution for ResolveTrace. It is intended to validate and run the same public contract used by ResolveTrace clients without exposing private service internals.
+`resolvetrace-core` is the public, self-hosted server distribution for ResolveTrace. It runs the same public contract used by ResolveTrace clients without exposing private service internals.
 
-## Scope
+## Layout
 
-Planned contents:
+- `server/` — the ingest/portal server: HTTP API, Postgres/Redis/S3 adapters,
+  replay pipeline, retention, and the portal-auth contract seams.
+- `web/` — the operator portal UI (Next.js): sessions, replay, audit, settings.
+- `deploy/` — Docker image + compose bundle to build and run the stack. See
+  [deploy/README.md](./deploy/README.md).
 
-- `server/`
-- `web/`
-- `deploy/`
-- `examples/`
-- `docs/`
+Runnable SDK examples live in the separate
+[resolvetrace-examples](https://github.com/PeakTek/resolvetrace-examples) repo.
 
-This repository is intentionally focused on:
+This repository is focused on:
 
 - local development
 - self-hosted deployments
