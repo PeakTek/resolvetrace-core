@@ -12,10 +12,13 @@ import { publicView } from "@/lib/session";
  */
 export async function Shell({ children }: { children: React.ReactNode }) {
   const session = await getSession();
+  // Optional per-deployment brand label (multi-instance deployments set it so
+  // each portal is visually identifiable). Read server-side at request time.
+  const brand = process.env.PORTAL_BRAND_NAME;
   return (
     <SessionProvider value={session ? publicView(session) : null}>
       <div className="flex min-h-screen flex-col">
-        <TopBar />
+        <TopBar brand={brand} />
         <div className="flex flex-1">
           <Sidebar />
           <main className="flex-1 bg-neutral-50">{children}</main>

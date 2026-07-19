@@ -6,7 +6,7 @@ import { LogOut, User } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { TenantSwitcher } from "./tenant-switcher";
 
-export function TopBar() {
+export function TopBar({ brand }: { brand?: string }) {
   const session = useSession();
   const router = useRouter();
 
@@ -22,7 +22,9 @@ export function TopBar() {
   return (
     <header className="flex h-14 items-center justify-between border-b border-neutral-200 bg-white px-6">
       <div className="flex items-center gap-3">
-        <div className="text-sm font-semibold tracking-tight">ResolveTrace</div>
+        <div className="text-sm font-semibold tracking-tight">
+          {brand ?? "ResolveTrace"}
+        </div>
         <TenantSwitcher />
       </div>
       {session ? (

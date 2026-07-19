@@ -29,6 +29,7 @@ function LoginForm() {
 
   const [mode, setMode] = useState<Mode>("loading");
   const [providerLabel, setProviderLabel] = useState("Sign in");
+  const [brand, setBrand] = useState("ResolveTrace");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(errorMessage(params.get("error")));
@@ -38,10 +39,11 @@ function LoginForm() {
     let active = true;
     fetch("/api/auth/config")
       .then((r) => r.json())
-      .then((c: { mode?: string; providerLabel?: string }) => {
+      .then((c: { mode?: string; providerLabel?: string; brand?: string }) => {
         if (!active) return;
         setMode(c.mode === "redirect" ? "redirect" : "password");
         if (c.providerLabel) setProviderLabel(c.providerLabel);
+        if (c.brand) setBrand(c.brand);
       })
       .catch(() => {
         if (active) setMode("password");
@@ -99,7 +101,7 @@ function LoginForm() {
 
   return (
     <Card className="w-full max-w-sm p-6">
-      <h1 className="mb-1 text-xl font-semibold">Sign in to ResolveTrace</h1>
+      <h1 className="mb-1 text-xl font-semibold">Sign in to {brand}</h1>
 
       {mode === "redirect" ? (
         <>

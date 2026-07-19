@@ -21,6 +21,7 @@ import {
   AuthPrincipal,
   AuthProvider,
   LocalCredentials,
+  OidcBeginOptions,
   OidcBeginResult,
   OidcCompleteParams,
 } from "./types.js";
@@ -56,21 +57,39 @@ export interface OidcClientLike {
 export interface OidcAuthOptions {
   client: OidcClientLike;
   redirectUrl: string;
+  /**
+   * Additional redirect URIs accepted as per-request overrides (multi-host
+   * deployments sharing one auth backend). The default `redirectUrl` is always
+   * allowed. The IdP's own redirect-URI allowlist remains the primary OAuth
+   * enforcement; this is defense-in-depth on an unauthenticated endpoint.
+   */
+  allowedRedirectUrls?: string[];
   /** Space-separated scope string (default `openid profile email`). */
   scope?: string;
   /** Default roles assigned when the ID token carries none. */
   defaultRoles?: string[];
 }
 
+/** Thrown when a per-request redirect_uri is not in the allowlist. */
+export class OidcRedirectUriError extends Error {
+  constructor(uri: string) {
+    super(`redirect_uri not allowed: ${uri}`);
+    this.name = "OidcRedirectUriError";
+  }
+}
+
 interface PendingFlow {
   state: string;
   codeVerifier: string;
+  /** The exact redirect_uri sent to the IdP for THIS flow. */
+  redirectUri: string;
   expiresAt: number;
 }
 
 export class OidcAuthProvider implements AuthProvider {
   private readonly client: OidcClientLike;
   private readonly redirectUrl: string;
+  private readonly allowedRedirectUrls: Set<string>;
   private readonly scope: string;
   private readonly defaultRoles: string[];
   private readonly pending = new Map<string, PendingFlow>();
@@ -78,6 +97,10 @@ export class OidcAuthProvider implements AuthProvider {
   constructor(opts: OidcAuthOptions) {
     this.client = opts.client;
     this.redirectUrl = opts.redirectUrl;
+    this.allowedRedirectUrls = new Set([
+      opts.redirectUrl,
+      ...(opts.allowedRedirectUrls ?? []),
+    ]);
     this.scope = opts.scope ?? "openid profile email";
     this.defaultRoles = opts.defaultRoles ?? ["viewer"];
   }
@@ -93,7 +116,14 @@ export class OidcAuthProvider implements AuthProvider {
     return null;
   }
 
-  async beginOidcFlow(): Promise<OidcBeginResult> {
+  async beginOidcFlow(options?: OidcBeginOptions): Promise<OidcBeginResult> {
+    const redirectUri = options?.redirectUri ?? this.redirectUrl;
+    // Reject loudly rather than falling back: a silent fallback would send the
+    // login back to a DIFFERENT host than the one that started it.
+    if (!this.allowedRedirectUrls.has(redirectUri)) {
+      throw new OidcRedirectUriError(redirectUri);
+    }
+
     const state = randomToken();
     const codeVerifier = randomToken(48);
     const codeChallenge = computeChallengeS256(codeVerifier);
@@ -101,6 +131,7 @@ export class OidcAuthProvider implements AuthProvider {
     this.pending.set(state, {
       state,
       codeVerifier,
+      redirectUri,
       // 10 minutes; flows that take longer are rejected.
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
@@ -111,7 +142,7 @@ export class OidcAuthProvider implements AuthProvider {
       state,
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
-      redirect_uri: this.redirectUrl,
+      redirect_uri: redirectUri,
     });
 
     return { redirectUrl, state };
@@ -127,8 +158,10 @@ export class OidcAuthProvider implements AuthProvider {
     }
     this.pending.delete(params.state);
 
+    // The token exchange MUST use the exact redirect_uri this flow was begun
+    // with (stored per flow), or the IdP rejects the code exchange.
     const tokenSet = await this.client.callback(
-      this.redirectUrl,
+      pending.redirectUri,
       {
         code: params.code,
         state: params.state,
@@ -194,9 +227,16 @@ export async function createOidcAuthFromEnv(
     clientSecret,
     redirectUrl,
   });
+  // Optional extra redirect URIs accepted as per-request overrides (comma-
+  // separated) — for several public hosts sharing this auth backend.
+  const allowedRedirectUrls = (env.OIDC_REDIRECT_URLS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return new OidcAuthProvider({
     client,
     redirectUrl,
+    allowedRedirectUrls,
     scope: env.OIDC_SCOPE,
   });
 }

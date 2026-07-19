@@ -242,11 +242,15 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
   // A mock OIDC client: authorizationUrl echoes the state; callback records its
   // params and returns a fixed identity. The real openid-client is never touched.
   let lastCallbackParams: { code: string; state: string; iss?: string } | undefined;
+  let lastAuthorizeRedirectUri: string | undefined;
+  let lastExchangeRedirectUri: string | undefined;
   const oidcClient: OidcClientLike = {
     authorizationUrl(params) {
+      lastAuthorizeRedirectUri = params.redirect_uri;
       return `https://idp.test/authorize?state=${params.state}&cc=${params.code_challenge}`;
     },
-    async callback(_redirectUri, params) {
+    async callback(redirectUri, params) {
+      lastExchangeRedirectUri = redirectUri;
       lastCallbackParams = params;
       return {
         claims: () => ({
@@ -262,6 +266,7 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
     const provider = new OidcAuthProvider({
       client: oidcClient,
       redirectUrl: "https://portal.test/api/auth/callback",
+      allowedRedirectUrls: ["https://portal-b.test/api/auth/callback"],
     });
     return buildTestApp({
       authProvider: provider,
@@ -326,6 +331,41 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
       payload: { code: "x", state: "never-issued" },
     });
     expect(cb.statusCode).toBe(401);
+  });
+
+  it("honors an allowlisted ?redirect_uri= for the whole flow (multi-host)", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+    lastAuthorizeRedirectUri = undefined;
+    lastExchangeRedirectUri = undefined;
+
+    const other = "https://portal-b.test/api/auth/callback";
+    const authz = await app.inject({
+      method: "GET",
+      url: `/api/v1/portal/auth/authorize?redirect_uri=${encodeURIComponent(other)}`,
+    });
+    expect(authz.statusCode, authz.body).toBe(200);
+    expect(lastAuthorizeRedirectUri).toBe(other);
+
+    const cb = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/callback",
+      payload: { code: "auth-code", state: authz.json().state },
+    });
+    expect(cb.statusCode, cb.body).toBe(200);
+    // The token exchange reuses the flow's redirect URI, not the default.
+    expect(lastExchangeRedirectUri).toBe(other);
+  });
+
+  it("rejects a non-allowlisted ?redirect_uri= with 400", async () => {
+    const { app } = await buildOidc();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/auth/authorize?redirect_uri=https%3A%2F%2Fevil.test%2Fcb",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("redirect_uri_not_allowed");
   });
 
   it("password-mode provider 404s the OIDC endpoints", async () => {

@@ -31,6 +31,17 @@ export interface OidcBeginResult {
   state: string;
 }
 
+/** Options for beginning an OIDC flow. */
+export interface OidcBeginOptions {
+  /**
+   * Per-request redirect URI override, for deployments where several public
+   * hosts share one auth backend. When absent the provider uses its configured
+   * default. Providers MAY ignore it; providers that honor it MUST reuse the
+   * same value for the token exchange (redirect_uri consistency).
+   */
+  redirectUri?: string;
+}
+
 /** Parameters returned by the IdP on the redirect back to our server. */
 export interface OidcCompleteParams {
   code: string;
@@ -62,7 +73,7 @@ export interface AuthProvider {
   verifyCredentials(input: LocalCredentials): Promise<AuthPrincipal | null>;
 
   /** Begin an OIDC Authorization Code + PKCE flow. Optional. */
-  beginOidcFlow?(): Promise<OidcBeginResult>;
+  beginOidcFlow?(options?: OidcBeginOptions): Promise<OidcBeginResult>;
 
   /** Complete an OIDC Authorization Code + PKCE flow. Optional. */
   completeOidcFlow?(params: OidcCompleteParams): Promise<AuthPrincipal>;
