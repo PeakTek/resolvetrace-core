@@ -10,6 +10,7 @@ export {
 export type { LocalAuthOptions, LocalAuthUser } from "./local.js";
 export {
   OidcAuthProvider,
+  OidcRedirectUriError,
   createOidcAuthFromEnv,
 } from "./oidc.js";
 export type {

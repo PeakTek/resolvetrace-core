@@ -41,6 +41,7 @@ import {
   signPortalIdentity,
   verifyPortalIdentity,
   defaultScopesForRole,
+  OidcRedirectUriError,
 } from "../../auth/index.js";
 
 /** Portal identity-token lifetime (also the effective portal session length). */
@@ -250,7 +251,10 @@ export const portalAuthRoutes: FastifyPluginAsync<
   // --- GET authorize (OIDC/SSO redirect mode) ----------------------------
   // Begins the Authorization Code + PKCE flow; the caller redirects the browser
   // to `redirectUrl`. 404 when the provider is not a redirect/OIDC one.
-  fastify.get("/api/v1/portal/auth/authorize", rl, async (_request, reply) => {
+  // `?redirect_uri=` lets a multi-host deployment (several portal origins, one
+  // auth backend) ask for its own callback; the provider validates it against
+  // its allowlist and reuses it for the token exchange.
+  fastify.get("/api/v1/portal/auth/authorize", rl, async (request, reply) => {
     if (typeof opts.authProvider.beginOidcFlow !== "function") {
       reply.code(404);
       return {
@@ -258,7 +262,26 @@ export const portalAuthRoutes: FastifyPluginAsync<
         message: "This deployment does not use redirect login.",
       };
     }
-    const begun = await opts.authProvider.beginOidcFlow();
+    const q = (request.query ?? {}) as Record<string, unknown>;
+    const redirectUri =
+      typeof q["redirect_uri"] === "string" && q["redirect_uri"].length > 0
+        ? q["redirect_uri"]
+        : undefined;
+    let begun;
+    try {
+      begun = await opts.authProvider.beginOidcFlow(
+        redirectUri ? { redirectUri } : undefined
+      );
+    } catch (err) {
+      if (err instanceof OidcRedirectUriError) {
+        reply.code(400);
+        return {
+          error: "redirect_uri_not_allowed",
+          message: "This redirect URI is not configured.",
+        };
+      }
+      throw err;
+    }
     return { redirectUrl: begun.redirectUrl, state: begun.state };
   });
 

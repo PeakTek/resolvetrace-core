@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { OidcAuthProvider, OidcClientLike } from "../oidc.js";
+import {
+  OidcAuthProvider,
+  OidcClientLike,
+  OidcRedirectUriError,
+} from "../oidc.js";
 
 function fakeClient(overrides: Partial<OidcClientLike> = {}): OidcClientLike {
   return {
@@ -93,6 +97,56 @@ describe("OidcAuthProvider", () => {
       password: "y",
     });
     expect(principal).toBeNull();
+  });
+
+  it("uses an allowlisted per-request redirect URI for BOTH legs of the flow", async () => {
+    const client = fakeClient();
+    const p = new OidcAuthProvider({
+      client,
+      redirectUrl: "https://portal-a.example/callback",
+      allowedRedirectUrls: ["https://portal-b.example/callback"],
+    });
+
+    const { state } = await p.beginOidcFlow({
+      redirectUri: "https://portal-b.example/callback",
+    });
+    const authorizeArgs = (client.authorizationUrl as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![0] as { redirect_uri: string };
+    expect(authorizeArgs.redirect_uri).toBe("https://portal-b.example/callback");
+
+    await p.completeOidcFlow({ code: "c", state });
+    // Token exchange MUST reuse the flow's redirect URI, not the default.
+    const exchangeRedirect = (client.callback as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as string;
+    expect(exchangeRedirect).toBe("https://portal-b.example/callback");
+  });
+
+  it("rejects a non-allowlisted redirect URI", async () => {
+    const p = new OidcAuthProvider({
+      client: fakeClient(),
+      redirectUrl: "https://portal-a.example/callback",
+      allowedRedirectUrls: ["https://portal-b.example/callback"],
+    });
+    await expect(
+      p.beginOidcFlow({ redirectUri: "https://evil.example/callback" })
+    ).rejects.toThrow(OidcRedirectUriError);
+  });
+
+  it("keeps using the constructor default when no override is given", async () => {
+    const client = fakeClient();
+    const p = new OidcAuthProvider({
+      client,
+      redirectUrl: "https://portal-a.example/callback",
+      allowedRedirectUrls: ["https://portal-b.example/callback"],
+    });
+    const { state } = await p.beginOidcFlow();
+    await p.completeOidcFlow({ code: "c", state });
+    const authorizeArgs = (client.authorizationUrl as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![0] as { redirect_uri: string };
+    const exchangeRedirect = (client.callback as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as string;
+    expect(authorizeArgs.redirect_uri).toBe("https://portal-a.example/callback");
+    expect(exchangeRedirect).toBe("https://portal-a.example/callback");
   });
 
   it("falls back to defaultRoles when the ID token carries none", async () => {
