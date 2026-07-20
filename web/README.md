@@ -1,23 +1,25 @@
 # ResolveTrace OSS portal (shell)
 
 The Next.js 16 App Router dashboard for self-hosted single-tenant
-ResolveTrace deployments. Session list and detail pages render live data
-from the ingest server's portal query endpoints; `/login` and `/audit`
-remain placeholder callouts.
+ResolveTrace deployments. Session, replay, and audit pages render live data
+from the ingest server's portal query endpoints; `/login` is a development
+stub (the OSS build is single-tenant, with no identity provider).
 
 ## What works today
 
-- `/login` — accepts any non-empty credentials (development stub)
-- `/sessions` — session list and detail pages render live data from the ingest server's portal query endpoints
-- `/sessions/[id]` — session metadata, client details, and event list
-- `/audit` — empty audit-log placeholder
+- `/sessions` + `/sessions/[id]` — session list, metadata, client details, and event list (live)
+- session replay — rrweb-based player with scale-to-fit + fullscreen (live chunk download)
+- `/audit` — audit log (live)
+- `/login` — accepts any non-empty credentials (development stub, see below)
 - `tsc --noEmit` + `next build` both green
 
-## What's intentionally missing
+## Auth (OSS vs managed)
 
-- Real authentication (OIDC / env-based). The portal-to-ingest bearer is server-to-server today.
-- Replay viewer. Needs real chunk-download + timeline UI.
-- Audit log page. Still an empty-state placeholder.
+The OSS build is **single-tenant by design** and ships a login stub: the
+portal's server-side calls use a bearer shared with the ingest service. Real
+user login + RBAC + multi-tenant workspace switching are provided by a
+**composing runtime** that injects an auth provider through the portal-auth
+seams — not part of the single-tenant OSS distribution.
 
 ## Prerequisites
 
@@ -44,7 +46,7 @@ npm run lint         # next lint
 
 ## Where the bigger picture lives
 
-Portal architecture follows the Portal Web App + Portal API split. Real
-auth for the portal user session is still a later wave; today the
-portal's server-side calls use a bearer token shared with the ingest
-service.
+Portal architecture follows the Portal Web App + Portal API split. In the OSS
+single-tenant build the portal's server-side calls use a bearer shared with the
+ingest service; managed deployments inject a real auth provider through the
+portal-auth seams (see the platform runtime).

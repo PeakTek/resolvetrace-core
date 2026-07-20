@@ -130,7 +130,7 @@ from the first event's `captured_at` so listings stay correct.
 
 ## Portal (Next.js)
 
-The portal is served by Next.js's standalone runtime on port 3000. `/sessions` and `/sessions/[id]` render live data from the ingest server; `/login` is a development stub that accepts any non-empty credentials, and `/audit` is still an empty-state placeholder. Real authentication and the audit log land in later waves; see `web/README.md` for scope.
+The portal is served by Next.js's standalone runtime on port 3000. `/sessions`, `/sessions/[id]`, and `/audit` render live data from the ingest server. `/login` is a development stub that accepts any non-empty credentials — the OSS build ships single-tenant with no identity provider; real user login + RBAC are a managed-deployment concern (a composing runtime injects an auth provider). See `web/README.md` for scope.
 
 Environment variables the portal reads at startup:
 
@@ -150,3 +150,22 @@ Session list and detail pages query the ingest server over HTTP from server comp
 |---|---|---|
 | `RT_INGEST_URL` | `http://resolvetrace:4317` | Ingest server URL used by Portal server components for session queries. |
 | `RT_PORTAL_API_TOKEN` | — | Bearer token sent to the ingest server. Must match the ingest side's `PORTAL_API_TOKEN` (falls back to `OSS_API_KEY` if the portal-specific one isn't set). |
+
+## Operating notes (self-hosted)
+
+The OSS bundle is a single-tenant server you run yourself; a few durability and
+security basics worth wiring for anything beyond local use:
+
+- **Persistence.** Point the ingest service at Postgres (`DATABASE_URL`) so
+  events/sessions/audit/replay-manifests survive restarts (the in-memory
+  defaults are for tests/local only). Set `REDIS_URL` for correct idempotent
+  dedup across multiple ingest nodes. Replay chunks go to S3/MinIO.
+- **Backups.** Back up the Postgres database and the replay object store
+  (chunks live under `<sessionId>/<seq>.rrweb`).
+- **Secrets.** `RT_PORTAL_API_TOKEN`/`PORTAL_API_TOKEN` (portal↔ingest bearer)
+  and any SDK API keys are secrets — rotate them by updating the env and
+  restarting; keep them out of the image and version control.
+- **TLS + auth.** Terminate TLS at a reverse proxy in front of the server. The
+  OSS portal login is a stub (single-tenant) — restrict portal access at the
+  network/proxy layer, or run behind your own SSO. Real multi-tenant login is a
+  managed-deployment concern, not part of this bundle.
