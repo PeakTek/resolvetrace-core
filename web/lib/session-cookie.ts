@@ -18,7 +18,14 @@ export async function getSession(): Promise<PortalSession | null> {
   const store = await cookies();
   const value = store.get(SESSION_COOKIE)?.value;
   if (!value) return null;
-  return openSession(value);
+  const session = await openSession(value);
+  if (!session) return null;
+  // Defence in depth behind the middleware gate: the session secret is shared
+  // across portal instances, so a cookie minted at another tenant's portal
+  // decrypts here. On a pinned portal that session is not valid.
+  const pinned = process.env["PORTAL_TENANT_ID"];
+  if (pinned && session.currentTenantId !== pinned) return null;
+  return session;
 }
 
 /** Persist a session as the encrypted, httpOnly cookie. */

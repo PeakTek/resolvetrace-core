@@ -21,7 +21,17 @@ export async function middleware(request: NextRequest) {
 
   const cookie = request.cookies.get(SESSION_COOKIE)?.value;
   const session = cookie ? await openSession(cookie) : null;
-  if (session) {
+  // A pinned portal serves one tenant. The session secret is deliberately
+  // shared across portal instances (cookies are host-scoped), so a cookie
+  // minted at another tenant's portal decrypts here — reject it rather than
+  // rendering this tenant's portal around a foreign session.
+  // Bracket access on purpose: `process.env.X` member access is inlined at
+  // build time, which would bake in `undefined` and silently fail open.
+  const pinned = process.env["PORTAL_TENANT_ID"];
+  const foreign = Boolean(
+    session && pinned && session.currentTenantId !== pinned
+  );
+  if (session && !foreign) {
     return NextResponse.next();
   }
 
@@ -32,7 +42,11 @@ export async function middleware(request: NextRequest) {
   // Build the redirect from the PUBLIC origin — behind a reverse proxy the
   // request's own URL can be the container's internal listen address.
   const url = new URL("/login", publicOrigin(request));
-  url.searchParams.set("next", pathname);
+  if (foreign) {
+    url.searchParams.set("error", "no_access");
+  } else {
+    url.searchParams.set("next", pathname);
+  }
   return NextResponse.redirect(url);
 }
 
