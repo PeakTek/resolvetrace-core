@@ -11,12 +11,24 @@ export function TopBar({ brand }: { brand?: string }) {
   const router = useRouter();
 
   async function signOut() {
+    let logoutUrl: string | undefined;
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      router.replace("/login");
-      router.refresh();
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      ({ logoutUrl } = (await res.json().catch(() => ({}))) as {
+        logoutUrl?: string;
+      });
+    } catch {
+      /* fall through to the local sign-out below */
     }
+    if (logoutUrl) {
+      // Full sign-out: end the session at the identity provider too, else the
+      // next "Sign in with SSO" is satisfied silently and the user is never
+      // really signed out. The IdP returns the browser to /login.
+      window.location.href = logoutUrl;
+      return;
+    }
+    router.replace("/login");
+    router.refresh();
   }
 
   return (

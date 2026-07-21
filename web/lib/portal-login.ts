@@ -10,6 +10,20 @@ export const INGEST_BASE = (
   process.env.RT_INGEST_URL ?? "http://resolvetrace:4317"
 ).replace(/\/$/, "");
 
+/**
+ * The single tenant this portal instance serves, when it is a per-tenant
+ * deployment. Sent on every identity call so the backend refuses users without
+ * a membership in THIS tenant — authenticating against the shared IdP must not
+ * be enough to enter another tenant's portal. Unset ⇒ every membership is
+ * offered (OSS single-tenant, or a multi-workspace portal).
+ */
+export const PORTAL_TENANT_ID =
+  process.env.PORTAL_TENANT_ID?.trim() || undefined;
+
+/** Body fragment carrying the pin (empty when this portal isn't pinned). */
+export const tenantPin = (): { tenantId?: string } =>
+  PORTAL_TENANT_ID ? { tenantId: PORTAL_TENANT_ID } : {};
+
 /** Success shape returned by the backend login + callback endpoints. */
 export interface PortalLoginResult {
   user: { userId: string; email: string; roles: string[] };

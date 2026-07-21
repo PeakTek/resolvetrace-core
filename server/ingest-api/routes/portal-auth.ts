@@ -120,6 +120,18 @@ export const portalAuthRoutes: FastifyPluginAsync<
     return { scopes: defaultScopesForRole(m.role) };
   }
 
+  /**
+   * The tenant a single-tenant portal deployment is pinned to, when it sent
+   * one. Trusting the caller here only ever NARROWS access — membership in the
+   * pinned tenant is still verified — so a forged value cannot widen it.
+   */
+  function pinnedTenantFrom(
+    source: Record<string, unknown> | undefined
+  ): string | undefined {
+    const v = source?.["tenantId"];
+    return typeof v === "string" && v.length > 0 ? v : undefined;
+  }
+
   /** Verified identity from the Bearer identity token, or null. */
   function identityFrom(
     request: FastifyRequest
@@ -140,19 +152,48 @@ export const portalAuthRoutes: FastifyPluginAsync<
   async function completeLogin(
     principal: { userId: string; email: string; roles: string[] },
     request: FastifyRequest,
-    method: string
+    method: string,
+    pinnedTenantId?: string
   ): Promise<
     | { ok: true; result: Record<string, unknown> }
     | { ok: false; status: number; body: Record<string, unknown> }
   > {
-    const memberships = await membershipsForUser(principal.userId, principal.roles);
-    if (memberships.length === 0) {
+    const all = await membershipsForUser(principal.userId, principal.roles);
+    if (all.length === 0) {
       return {
         ok: false,
         status: 403,
         body: {
           error: "no_tenants",
           message: "This account is not a member of any tenant.",
+        },
+      };
+    }
+    // A portal deployment serving ONE tenant pins its id. Authenticating is not
+    // enough to enter it: without a membership in THAT tenant the login is
+    // refused, so another tenant's user cannot land in this portal at all.
+    // Absent a pin (OSS single-tenant, or a multi-workspace portal) every
+    // membership is offered, as before.
+    const memberships = pinnedTenantId
+      ? all.filter((m) => m.tenantId === pinnedTenantId)
+      : all;
+    if (memberships.length === 0) {
+      await recordAudit(
+        opts.auditSink,
+        pinnedTenantId!,
+        {
+          actor: principal.userId,
+          action: AuditAction.AUTH_LOGIN_FAILED,
+          metadata: { method, reason: "no_access" },
+        },
+        request.log
+      );
+      return {
+        ok: false,
+        status: 403,
+        body: {
+          error: "no_access",
+          message: "This account does not have access to this workspace.",
         },
       };
     }
@@ -240,7 +281,12 @@ export const portalAuthRoutes: FastifyPluginAsync<
       return { error: "unauthorized", message: "Invalid username or password." };
     }
 
-    const outcome = await completeLogin(principal, request, "password");
+    const outcome = await completeLogin(
+      principal,
+      request,
+      "password",
+      pinnedTenantFrom(body)
+    );
     if (!outcome.ok) {
       reply.code(outcome.status);
       return outcome.body;
@@ -320,7 +366,12 @@ export const portalAuthRoutes: FastifyPluginAsync<
       reply.code(401);
       return { error: "unauthorized", message: "SSO sign-in failed." };
     }
-    const outcome = await completeLogin(principal, request, "oidc");
+    const outcome = await completeLogin(
+      principal,
+      request,
+      "oidc",
+      pinnedTenantFrom(body)
+    );
     if (!outcome.ok) {
       reply.code(outcome.status);
       return outcome.body;
@@ -377,10 +428,25 @@ export const portalAuthRoutes: FastifyPluginAsync<
     const roles = identity?.roles ?? ["admin"];
     const email = identity?.email ?? "";
 
-    const memberships = await membershipsForUser(userId, roles);
-    if (memberships.length === 0) {
+    const all = await membershipsForUser(userId, roles);
+    if (all.length === 0) {
       reply.code(403);
       return { error: "no_tenants", message: "This account is not a member of any tenant." };
+    }
+    // Same pin as login: revalidation must not re-widen a pinned portal to the
+    // user's other workspaces.
+    const pinned = pinnedTenantFrom(
+      (request.query ?? {}) as Record<string, unknown>
+    );
+    const memberships = pinned
+      ? all.filter((m) => m.tenantId === pinned)
+      : all;
+    if (memberships.length === 0) {
+      reply.code(403);
+      return {
+        error: "no_access",
+        message: "This account does not have access to this workspace.",
+      };
     }
     return {
       user: { userId, email, roles },
@@ -391,13 +457,40 @@ export const portalAuthRoutes: FastifyPluginAsync<
     };
   });
 
-  // --- POST logout (stateless; the portal clears its own cookie) ---------
+  // --- POST logout -------------------------------------------------------
+  // The portal clears its own cookie. That alone is NOT a full sign-out under
+  // redirect login: the provider's session survives, so the next authorize is
+  // satisfied silently and the user is signed straight back in without ever
+  // presenting credentials. When the provider supports RP-initiated logout we
+  // hand back the URL the portal must send the browser to.
   fastify.post(
     "/api/v1/portal/auth/logout",
     rl,
-    async (_request: FastifyRequest, reply: FastifyReply) => {
-      reply.code(204);
-      return null;
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const postLogoutRedirectUri = body["postLogoutRedirectUri"];
+      if (
+        typeof opts.authProvider.buildLogoutUrl !== "function" ||
+        typeof postLogoutRedirectUri !== "string" ||
+        postLogoutRedirectUri.length === 0
+      ) {
+        return {};
+      }
+      try {
+        const logoutUrl = opts.authProvider.buildLogoutUrl({
+          postLogoutRedirectUri,
+        });
+        return logoutUrl ? { logoutUrl } : {};
+      } catch (err) {
+        if (err instanceof OidcRedirectUriError) {
+          reply.code(400);
+          return {
+            error: "redirect_uri_not_allowed",
+            message: "This post-logout redirect URI is not configured.",
+          };
+        }
+        throw err;
+      }
     }
   );
 };

@@ -3,6 +3,7 @@ import { setSessionCookie } from "@/lib/session-cookie";
 import {
   INGEST_BASE,
   sessionFromLoginResult,
+  tenantPin,
   type PortalLoginResult,
 } from "@/lib/portal-login";
 
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, ...tenantPin() }),
     });
   } catch {
     return NextResponse.json({ error: "upstream" }, { status: 502 });
