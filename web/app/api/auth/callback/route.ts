@@ -4,6 +4,7 @@ import { publicOrigin } from "@/lib/public-origin";
 import {
   INGEST_BASE,
   sessionFromLoginResult,
+  tenantPin,
   type PortalLoginResult,
 } from "@/lib/portal-login";
 
@@ -40,7 +41,16 @@ export async function GET(request: NextRequest) {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, state, ...(iss ? { iss } : {}) }),
+      body: JSON.stringify({
+        code,
+        state,
+        ...(iss ? { iss } : {}),
+        // Pinned portals refuse a user with no membership in THIS tenant; the
+        // backend answers 403 no_access, which /login renders as a clear
+        // "no access to this workspace" rather than dropping them into
+        // someone else's portal.
+        ...tenantPin(),
+      }),
     });
   } catch {
     return fail("upstream");

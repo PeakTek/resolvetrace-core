@@ -24,6 +24,7 @@ import {
   OidcBeginOptions,
   OidcBeginResult,
   OidcCompleteParams,
+  OidcLogoutOptions,
 } from "./types.js";
 
 /**
@@ -52,6 +53,14 @@ export interface OidcClientLike {
       "https://resolvetrace.example/roles"?: string[];
     };
   }>;
+
+  /**
+   * RP-initiated logout URL, or `undefined` when the IdP advertises no
+   * `end_session_endpoint`. Optional so existing mocks stay valid.
+   */
+  endSessionUrl?(params: {
+    post_logout_redirect_uri: string;
+  }): string | undefined;
 }
 
 export interface OidcAuthOptions {
@@ -90,6 +99,8 @@ export class OidcAuthProvider implements AuthProvider {
   private readonly client: OidcClientLike;
   private readonly redirectUrl: string;
   private readonly allowedRedirectUrls: Set<string>;
+  /** Origins of the allowed redirect URLs — the post-logout allowlist. */
+  private readonly allowedOrigins: Set<string>;
   private readonly scope: string;
   private readonly defaultRoles: string[];
   private readonly pending = new Map<string, PendingFlow>();
@@ -101,6 +112,9 @@ export class OidcAuthProvider implements AuthProvider {
       opts.redirectUrl,
       ...(opts.allowedRedirectUrls ?? []),
     ]);
+    this.allowedOrigins = new Set(
+      [...this.allowedRedirectUrls].map(originOf).filter(Boolean)
+    );
     this.scope = opts.scope ?? "openid profile email";
     this.defaultRoles = opts.defaultRoles ?? ["viewer"];
   }
@@ -146,6 +160,27 @@ export class OidcAuthProvider implements AuthProvider {
     });
 
     return { redirectUrl, state };
+  }
+
+  /**
+   * RP-initiated logout URL. Clearing the portal cookie alone leaves the IdP
+   * session intact, so the next authorize is satisfied silently — the user
+   * appears signed out but is not. Sending the browser here ends the session
+   * at the provider too.
+   *
+   * The post-logout URI is validated by ORIGIN against the same hosts allowed
+   * to receive the login callback: this endpoint is unauthenticated, so an
+   * unvalidated value would make us an open redirector. (Path is free — the
+   * callback path and the post-logout landing path legitimately differ.)
+   */
+  buildLogoutUrl(options: OidcLogoutOptions): string | undefined {
+    if (typeof this.client.endSessionUrl !== "function") return undefined;
+    if (!this.allowedOrigins.has(originOf(options.postLogoutRedirectUri))) {
+      throw new OidcRedirectUriError(options.postLogoutRedirectUri);
+    }
+    return this.client.endSessionUrl({
+      post_logout_redirect_uri: options.postLogoutRedirectUri,
+    });
   }
 
   async completeOidcFlow(
@@ -262,6 +297,7 @@ async function defaultDiscoverer(opts: {
       clientSecret: string
     ): Promise<unknown>;
     buildAuthorizationUrl(config: unknown, params: Record<string, string>): URL;
+    buildEndSessionUrl(config: unknown, params: Record<string, string>): URL;
     authorizationCodeGrant(
       config: unknown,
       currentUrl: URL,
@@ -284,6 +320,17 @@ async function defaultDiscoverer(opts: {
           code_challenge_method: params.code_challenge_method,
         })
         .href;
+    },
+    endSessionUrl(params) {
+      try {
+        return client.buildEndSessionUrl(config, {
+          post_logout_redirect_uri: params.post_logout_redirect_uri,
+        }).href;
+      } catch {
+        // The IdP advertises no end_session_endpoint — no RP-initiated logout
+        // is possible. The caller falls back to clearing the local session.
+        return undefined;
+      }
     },
     async callback(redirectUri, params, checks) {
       const currentUrl = new URL(redirectUri);
@@ -310,6 +357,15 @@ async function defaultDiscoverer(opts: {
       };
     },
   };
+}
+
+/** Origin of a URL, or "" when unparseable (never matches an allowlist entry). */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
 }
 
 function randomToken(bytes = 32): string {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildSession } from "@/lib/session";
 import { getSession, setSessionCookie } from "@/lib/session-cookie";
+import { PORTAL_TENANT_ID } from "@/lib/portal-login";
 
 /**
  * Switch the active tenant. Re-scopes the session to the selected tenant via
@@ -22,6 +23,11 @@ export async function POST(request: Request) {
   const tenantId = typeof body.tenantId === "string" ? body.tenantId : "";
   if (!tenantId) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+  // A pinned portal serves exactly one tenant: refuse a switch to any other,
+  // even for a user who legitimately belongs to it elsewhere.
+  if (PORTAL_TENANT_ID && tenantId !== PORTAL_TENANT_ID) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   let res: Response;

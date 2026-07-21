@@ -380,3 +380,158 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
     expect(authz.statusCode).toBe(404);
   });
 });
+
+/**
+ * Regression: a portal deployment that serves ONE tenant must refuse users who
+ * are not members of that tenant. Authenticating successfully is not enough —
+ * before this, any authenticated user landed in any tenant's portal (they were
+ * dropped into their OWN first workspace under the other tenant's branding).
+ */
+describe("portal-auth single-tenant portal pin", () => {
+  it("login pinned to a tenant the user belongs to returns ONLY that tenant", async () => {
+    const { app } = await buildManaged();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/login",
+      payload: { username: "u@example.test", password: "correct", tenantId: "t-B" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json();
+    expect(body.currentTenantId).toBe("t-B");
+    // t-A must not leak into the switcher on t-B's portal.
+    expect(body.tenants).toEqual([{ id: "t-B", displayName: "Beta" }]);
+    expect(body.role).toBe("support");
+  });
+
+  it("login pinned to a tenant the user does NOT belong to is refused", async () => {
+    const { app } = await buildManaged();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/login",
+      payload: { username: "u@example.test", password: "correct", tenantId: "t-OTHER" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("no_access");
+  });
+
+  it("unpinned login still offers every membership (OSS / multi-workspace)", async () => {
+    const { app } = await buildManaged();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/login",
+      payload: { username: "u@example.test", password: "correct" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().tenants).toHaveLength(2);
+  });
+
+  it("session revalidation honours the pin (cannot re-widen)", async () => {
+    const { app } = await buildManaged();
+    close = () => app.close();
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/login",
+      payload: { username: "u@example.test", password: "correct", tenantId: "t-B" },
+    });
+    const { identityToken } = login.json();
+
+    const ok = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/auth/session?tenantId=t-B",
+      headers: { authorization: `Bearer ${identityToken}` },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().tenants).toEqual([{ id: "t-B", displayName: "Beta" }]);
+
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/v1/portal/auth/session?tenantId=t-OTHER",
+      headers: { authorization: `Bearer ${identityToken}` },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error).toBe("no_access");
+  });
+});
+
+/**
+ * Regression: clearing the portal cookie is not a full sign-out under redirect
+ * login — the IdP session survives and the next authorize is satisfied
+ * silently, so "Sign in with SSO" logs the user back in with no credentials.
+ * Logout must hand back the provider's end-session URL.
+ */
+describe("portal-auth RP-initiated logout", () => {
+  const logoutClient: OidcClientLike = {
+    authorizationUrl: (p) => `https://idp.test/authorize?state=${p.state}`,
+    async callback() {
+      return { claims: () => ({ sub: "u", email: "u@example.test" }) };
+    },
+    endSessionUrl: (p) =>
+      `https://idp.test/logout?post_logout_redirect_uri=${encodeURIComponent(
+        p.post_logout_redirect_uri
+      )}`,
+  };
+
+  async function buildWithLogout() {
+    return buildTestApp({
+      authProvider: new OidcAuthProvider({
+        client: logoutClient,
+        redirectUrl: "https://portal.test/api/auth/callback",
+        allowedRedirectUrls: ["https://portal-b.test/api/auth/callback"],
+      }),
+      defaultPortalTenant: { id: "oss", displayName: "SSO Workspace" },
+    });
+  }
+
+  it("returns the provider end-session URL for an allowed origin", async () => {
+    const { app } = await buildWithLogout();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/logout",
+      payload: { postLogoutRedirectUri: "https://portal.test/login" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().logoutUrl).toContain("https://idp.test/logout");
+  });
+
+  it("allows any path on an allowlisted origin (callback path != landing path)", async () => {
+    const { app } = await buildWithLogout();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/logout",
+      payload: { postLogoutRedirectUri: "https://portal-b.test/login" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().logoutUrl).toBeTruthy();
+  });
+
+  it("refuses a foreign post-logout origin (open-redirect guard)", async () => {
+    const { app } = await buildWithLogout();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/logout",
+      payload: { postLogoutRedirectUri: "https://evil.test/login" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("redirect_uri_not_allowed");
+  });
+
+  it("password-mode deployments simply have no logout URL", async () => {
+    const { app } = await buildTestApp({
+      authProvider: { async verifyCredentials() { return null; } },
+    });
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/portal/auth/logout",
+      payload: { postLogoutRedirectUri: "https://portal.test/login" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().logoutUrl).toBeUndefined();
+  });
+});

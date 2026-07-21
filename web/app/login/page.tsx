@@ -15,6 +15,8 @@ function errorMessage(code: string | null): string | null {
       return "Invalid username or password.";
     case "no_tenants":
       return "This account does not have access to any workspace.";
+    case "no_access":
+      return "This account does not have access to this workspace.";
     case "sso":
       return "SSO sign-in failed. Please try again.";
     default:

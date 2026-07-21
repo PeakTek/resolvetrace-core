@@ -42,6 +42,16 @@ export interface OidcBeginOptions {
   redirectUri?: string;
 }
 
+/** Options for building a provider sign-out (RP-initiated logout) URL. */
+export interface OidcLogoutOptions {
+  /**
+   * Where the IdP should return the browser once the provider session has
+   * ended. Providers MUST validate this against their allowlist — it is
+   * attacker-influencable on an unauthenticated endpoint.
+   */
+  postLogoutRedirectUri: string;
+}
+
 /** Parameters returned by the IdP on the redirect back to our server. */
 export interface OidcCompleteParams {
   code: string;
@@ -77,6 +87,18 @@ export interface AuthProvider {
 
   /** Complete an OIDC Authorization Code + PKCE flow. Optional. */
   completeOidcFlow?(params: OidcCompleteParams): Promise<AuthPrincipal>;
+
+  /**
+   * Build the provider's sign-out URL (RP-initiated logout), or `undefined`
+   * when the provider has no end-session endpoint.
+   *
+   * Clearing our own session cookie is NOT a full sign-out for a redirect
+   * provider: the IdP's own session survives, so the next authorize request is
+   * satisfied silently and the user is logged straight back in. Deployments
+   * using redirect login MUST send the browser here after clearing the local
+   * session. Optional — password providers have no such concept.
+   */
+  buildLogoutUrl?(options: OidcLogoutOptions): string | undefined;
 }
 
 /** Raised when auth configuration is missing or malformed. */
