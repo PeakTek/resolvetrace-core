@@ -22,8 +22,8 @@ export function TopBar({ brand }: { brand?: string }) {
     }
     if (logoutUrl) {
       // Full sign-out: end the session at the identity provider too, else the
-      // next "Sign in with SSO" is satisfied silently and the user is never
-      // really signed out. The IdP returns the browser to /login.
+      // next sign-in is satisfied silently and the user is never really signed
+      // out. The IdP returns the browser to /login.
       window.location.href = logoutUrl;
       return;
     }

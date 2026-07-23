@@ -18,7 +18,7 @@ function errorMessage(code: string | null): string | null {
     case "no_access":
       return "This account does not have access to this workspace.";
     case "sso":
-      return "SSO sign-in failed. Please try again.";
+      return "Sign-in failed. Please try again.";
     default:
       return "Sign-in failed. Please try again.";
   }
@@ -94,9 +94,9 @@ function LoginForm() {
           return;
         }
       }
-      setError("SSO is not available right now.");
+      setError("Sign-in is not available right now.");
     } catch {
-      setError("Could not start SSO. Please try again.");
+      setError("Could not start sign-in. Please try again.");
     }
     setBusy(false);
   }

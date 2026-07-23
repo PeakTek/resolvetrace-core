@@ -244,7 +244,7 @@ export const portalAuthRoutes: FastifyPluginAsync<
     if (opts.portalAuthConfig) return opts.portalAuthConfig;
     const isOidc = typeof opts.authProvider.beginOidcFlow === "function";
     return isOidc
-      ? { mode: "redirect", providerLabel: "Sign in with SSO" }
+      ? { mode: "redirect", providerLabel: "Sign in" }
       : { mode: "password", providerLabel: "Sign in" };
   });
 
