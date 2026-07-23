@@ -47,6 +47,7 @@ export type {
   ReplayManifestStore,
   ReplayUploadGuard,
   ReplayUploadGuardContext,
+  CorsOriginValidator,
   PurgeStore,
   ReadinessCheck,
 } from "./ingest-api/types.js";

@@ -541,6 +541,27 @@ export interface ReplayUploadGuard {
 }
 
 /**
+ * Deployment-supplied CORS origin allow-list decision.
+ *
+ * A CORS preflight (`OPTIONS`) carries no credentials, so this server cannot
+ * know which caller (or, in a multi-tenant composition, which tenant) is
+ * behind a browser origin at preflight time. When a composing server needs the
+ * set of allowed browser origins to be dynamic — sourced from a registry and
+ * updated at runtime rather than fixed at boot — it injects this validator and
+ * the CORS layer consults it per request.
+ *
+ * `isAllowed` receives the request's `Origin` (already a normalized
+ * scheme://host[:port], never empty — same-origin / non-browser requests carry
+ * no Origin and bypass this). It returns whether that origin may make
+ * cross-origin requests. When no validator is injected (the default), CORS
+ * falls back to the static `corsOrigins` list — this seam adds no behavior on
+ * its own.
+ */
+export interface CorsOriginValidator {
+  isAllowed(origin: string): boolean | Promise<boolean>;
+}
+
+/**
  * Runtime wiring passed in to the Fastify app builder. All dependencies are
  * parameterised so tests can swap them for mocks.
  */
@@ -637,6 +658,13 @@ export interface IngestApiDependencies {
    * the tenant replay policy, exactly as before.
    */
   replayUploadGuard?: ReplayUploadGuard;
+  /**
+   * Optional deployment-supplied dynamic CORS origin allow-list (see
+   * `CorsOriginValidator`). When present, it decides cross-origin access per
+   * request, so the allowed origins can change at runtime without a restart.
+   * When absent (the default), CORS uses the static `corsOrigins` list.
+   */
+  corsOriginValidator?: CorsOriginValidator;
 }
 
 export type RateLimitClass =
