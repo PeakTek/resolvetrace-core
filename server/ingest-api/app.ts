@@ -8,7 +8,7 @@
 import type { Server } from "node:http";
 import Fastify, { FastifyInstance } from "fastify";
 import helmet from "@fastify/helmet";
-import cors from "@fastify/cors";
+import cors, { type FastifyCorsOptions } from "@fastify/cors";
 import { IngestApiDependencies } from "./types.js";
 import { authPlugin, UnauthorizedError } from "./plugins/auth.js";
 import {
@@ -108,9 +108,25 @@ export async function buildApp(
     // Permissive CSP at the ingest surface — no HTML served from here.
     contentSecurityPolicy: false,
   });
+  // Origin allow-list. A composing server may inject a dynamic validator
+  // (origins sourced from a registry, updatable at runtime); otherwise fall
+  // back to the static list from env (empty ⇒ reflect any origin). A request
+  // with no Origin (same-origin / non-browser) is never cross-origin, so it is
+  // always allowed through.
   const origins = opts.corsOrigins ?? [];
+  const validator = opts.corsOriginValidator;
+  const corsOrigin: FastifyCorsOptions["origin"] = validator
+    ? (origin, cb) => {
+        if (!origin) return cb(null, true);
+        Promise.resolve(validator.isAllowed(origin))
+          .then((ok) => cb(null, ok))
+          .catch(() => cb(null, false));
+      }
+    : origins.length === 0
+      ? true
+      : origins;
   await fastify.register(cors, {
-    origin: origins.length === 0 ? true : origins,
+    origin: corsOrigin,
     methods: ["POST", "GET", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Authorization",

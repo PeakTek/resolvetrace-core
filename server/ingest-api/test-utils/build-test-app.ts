@@ -22,6 +22,7 @@ import {
   AuditRepository,
   AuditSink,
   EventRepository,
+  CorsOriginValidator,
   EventSink,
   PurgeStore,
   RateLimitBudget,
@@ -101,6 +102,10 @@ export interface TestAppOverrides<
   webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
   /** Deployment-supplied replay upload authorization. Defaults to absent. */
   replayUploadGuard?: ReplayUploadGuard;
+  /** Static CORS origin allow-list. Empty/absent ⇒ reflect any origin. */
+  corsOrigins?: string[];
+  /** Deployment-supplied dynamic CORS origin validator. Defaults to absent. */
+  corsOriginValidator?: CorsOriginValidator;
 }
 
 export async function buildTestApp<
@@ -175,6 +180,8 @@ export async function buildTestApp<
     webhookHttpClient: overrides.webhookHttpClient,
     webhookDispatchPolicy: overrides.webhookDispatchPolicy,
     replayUploadGuard: overrides.replayUploadGuard,
+    corsOrigins: overrides.corsOrigins,
+    corsOriginValidator: overrides.corsOriginValidator,
     disableRequestLogging: true,
   });
 
