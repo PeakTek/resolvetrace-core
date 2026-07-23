@@ -300,8 +300,12 @@ export interface IngestApiClient {
    * Read recent submitted problem reports across sessions (Wave-25). There is
    * no cross-session event query on the ingest API, so this fans out over the
    * most recent sessions (bounded by `sessionScan`) and collects their
-   * `support.report_submitted` events server-side. Admin-gated like the other
-   * governance reads (403 for viewers) since it reads session detail.
+   * `support.report_submitted` events.
+   *
+   * Problem reports are a front-line support surface (description + support
+   * code + owning session), so they sit at the session-read baseline: support,
+   * engineer, and admin all see them. It reads only session list + detail,
+   * which any authenticated portal principal may read.
    */
   listReports(opts?: {
     sessionScan?: number;
@@ -601,20 +605,9 @@ export function createIngestApiClient(
     },
     async listReports(opts = {}) {
       const sessionScan = opts.sessionScan ?? 100;
-      // Probe admin access (and surface 403 for viewers) via a cheap admin read
-      // before scanning sessions, mirroring how the other governance reads gate.
-      const probe = await adminRequest<unknown>(
-        "GET",
-        `/api/v1/portal/settings/webhook`
-      );
-      if (probe.status === "forbidden") return { status: "forbidden" as const };
-      if (probe.status === "invalid") {
-        return { status: "invalid" as const, message: probe.message };
-      }
-      if (probe.status === "notFound") {
-        return { status: "ok" as const, data: [] };
-      }
-
+      // No admin probe: problem reports are session-read level (support/
+      // engineer/admin), not a tenant-admin governance read. Access is bounded
+      // by the session reads below, which the per-user credential authorizes.
       const listing = await request<PortalSessionListResponse>(
         `/api/v1/portal/sessions?limit=${encodeURIComponent(String(sessionScan))}`
       );
