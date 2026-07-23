@@ -278,7 +278,9 @@ describe("portal-auth OIDC/SSO redirect flow", () => {
     const { app } = await buildOidc();
     close = () => app.close();
     const res = await app.inject({ method: "GET", url: "/api/v1/portal/auth/config" });
-    expect(res.json().mode).toBe("redirect");
+    // Label is a plain action ("Sign in"), not the "SSO" acronym — the
+    // subtext already tells the user it's their organization account.
+    expect(res.json()).toEqual({ mode: "redirect", providerLabel: "Sign in" });
   });
 
   it("authorize returns a redirect URL + state; callback with that state logs in", async () => {
@@ -459,7 +461,7 @@ describe("portal-auth single-tenant portal pin", () => {
 /**
  * Regression: clearing the portal cookie is not a full sign-out under redirect
  * login — the IdP session survives and the next authorize is satisfied
- * silently, so "Sign in with SSO" logs the user back in with no credentials.
+ * silently, so the next sign-in logs the user back in with no credentials.
  * Logout must hand back the provider's end-session URL.
  */
 describe("portal-auth RP-initiated logout", () => {
