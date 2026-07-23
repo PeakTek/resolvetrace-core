@@ -13,7 +13,7 @@ import { formatRelative, formatSupportCode } from "@/lib/format";
  * `support.report_submitted` events; this page collects them across recent
  * sessions and lists the description, support code, source (widget/api), time
  * and a link to the owning session detail (where the event also renders on the
- * timeline). Admin-gated (the underlying reads require the audit scope).
+ * timeline). Session-read level — support, engineer, and admin all see it.
  *
  * Privacy: the description is the user's own free text and everything else was
  * scrubbed by the SDK before emission; we render only that scrubbed projection.
@@ -79,9 +79,8 @@ export default async function ReportsPage() {
               Not authorized
             </p>
             <p className="mt-2 text-sm text-neutral-600">
-              Viewing problem reports requires admin privileges. Your account
-              does not have the <span className="font-mono">audit:read</span>{" "}
-              scope.
+              Your account is not authorized to read session data for this
+              workspace.
             </p>
           </Card>
         ) : result.status === "error" ? (
