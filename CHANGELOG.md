@@ -19,6 +19,14 @@ surface and the container image are not yet stable.
   always allowed). Default-DENY and absent by default (the inverse polarity of
   the upload-authorization guard), so multi-clip can't be unlocked by
   configuration alone — only by injecting a policy that grants it.
+- OIDC portal auth: **injectable dynamic redirect-URI allow-list**. The OIDC
+  provider now accepts optional `isRedirectUriAllowed` / `isRedirectOriginAllowed`
+  hooks (via `OidcAuthOptions` and `createOidcAuthFromEnv`), consulted when a
+  per-request `redirect_uri` (login) or post-logout origin isn't in the static
+  `OIDC_REDIRECT_URLS` list. A composing server can back these with a registry so
+  per-tenant portal callback URLs are honored at runtime with no restart — the
+  same move already made for CORS origins. Absent ⇒ static list only (unchanged);
+  the IdP's own exact redirect-URI allow-list stays the primary enforcement.
 
 ## [0.3.0] — 2026-07-16
 

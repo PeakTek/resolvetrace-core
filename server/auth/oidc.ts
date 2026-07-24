@@ -73,6 +73,21 @@ export interface OidcAuthOptions {
    * enforcement; this is defense-in-depth on an unauthenticated endpoint.
    */
   allowedRedirectUrls?: string[];
+  /**
+   * Optional deployment-supplied dynamic allow-list, consulted when a
+   * per-request `redirect_uri` is not in the static `allowedRedirectUrls`. A
+   * composing server backs this with a registry so per-tenant callback URLs can
+   * be added at runtime with no restart (mirrors the CORS origin validator).
+   * Absent ⇒ only the static list is accepted (unchanged behavior).
+   */
+  isRedirectUriAllowed?: (uri: string) => boolean;
+  /**
+   * Optional deployment-supplied dynamic origin allow-list for the post-logout
+   * redirect (the logout endpoint validates by origin). Consulted when the
+   * origin is not among the static `allowedRedirectUrls`' origins. Absent ⇒
+   * static origins only.
+   */
+  isRedirectOriginAllowed?: (origin: string) => boolean;
   /** Space-separated scope string (default `openid profile email`). */
   scope?: string;
   /** Default roles assigned when the ID token carries none. */
@@ -101,6 +116,9 @@ export class OidcAuthProvider implements AuthProvider {
   private readonly allowedRedirectUrls: Set<string>;
   /** Origins of the allowed redirect URLs — the post-logout allowlist. */
   private readonly allowedOrigins: Set<string>;
+  /** Optional runtime allow-lists (registry-backed) — see OidcAuthOptions. */
+  private readonly isRedirectUriAllowed?: (uri: string) => boolean;
+  private readonly isRedirectOriginAllowed?: (origin: string) => boolean;
   private readonly scope: string;
   private readonly defaultRoles: string[];
   private readonly pending = new Map<string, PendingFlow>();
@@ -115,6 +133,8 @@ export class OidcAuthProvider implements AuthProvider {
     this.allowedOrigins = new Set(
       [...this.allowedRedirectUrls].map(originOf).filter(Boolean)
     );
+    this.isRedirectUriAllowed = opts.isRedirectUriAllowed;
+    this.isRedirectOriginAllowed = opts.isRedirectOriginAllowed;
     this.scope = opts.scope ?? "openid profile email";
     this.defaultRoles = opts.defaultRoles ?? ["viewer"];
   }
@@ -133,8 +153,13 @@ export class OidcAuthProvider implements AuthProvider {
   async beginOidcFlow(options?: OidcBeginOptions): Promise<OidcBeginResult> {
     const redirectUri = options?.redirectUri ?? this.redirectUrl;
     // Reject loudly rather than falling back: a silent fallback would send the
-    // login back to a DIFFERENT host than the one that started it.
-    if (!this.allowedRedirectUrls.has(redirectUri)) {
+    // login back to a DIFFERENT host than the one that started it. The static
+    // list is checked first; a registry-backed validator (if injected) accepts
+    // per-tenant callback URLs registered at runtime.
+    if (
+      !this.allowedRedirectUrls.has(redirectUri) &&
+      !(this.isRedirectUriAllowed?.(redirectUri) ?? false)
+    ) {
       throw new OidcRedirectUriError(redirectUri);
     }
 
@@ -175,7 +200,11 @@ export class OidcAuthProvider implements AuthProvider {
    */
   buildLogoutUrl(options: OidcLogoutOptions): string | undefined {
     if (typeof this.client.endSessionUrl !== "function") return undefined;
-    if (!this.allowedOrigins.has(originOf(options.postLogoutRedirectUri))) {
+    const origin = originOf(options.postLogoutRedirectUri);
+    if (
+      !this.allowedOrigins.has(origin) &&
+      !(this.isRedirectOriginAllowed?.(origin) ?? false)
+    ) {
       throw new OidcRedirectUriError(options.postLogoutRedirectUri);
     }
     return this.client.endSessionUrl({
@@ -238,6 +267,13 @@ export class OidcAuthProvider implements AuthProvider {
  * delegates to a provided discoverer so the test harness does not have to
  * stand up a real IdP.
  */
+export interface CreateOidcAuthOptions {
+  /** Registry-backed dynamic redirect-URI allow-list (login). */
+  isRedirectUriAllowed?: (uri: string) => boolean;
+  /** Registry-backed dynamic origin allow-list (post-logout). */
+  isRedirectOriginAllowed?: (origin: string) => boolean;
+}
+
 export async function createOidcAuthFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   discoverer: (opts: {
@@ -245,7 +281,8 @@ export async function createOidcAuthFromEnv(
     clientId: string;
     clientSecret: string;
     redirectUrl: string;
-  }) => Promise<OidcClientLike> = defaultDiscoverer
+  }) => Promise<OidcClientLike> = defaultDiscoverer,
+  opts: CreateOidcAuthOptions = {}
 ): Promise<OidcAuthProvider> {
   const issuerUrl = env.OIDC_ISSUER_URL;
   const clientId = env.OIDC_CLIENT_ID;
@@ -273,6 +310,8 @@ export async function createOidcAuthFromEnv(
     redirectUrl,
     allowedRedirectUrls,
     scope: env.OIDC_SCOPE,
+    isRedirectUriAllowed: opts.isRedirectUriAllowed,
+    isRedirectOriginAllowed: opts.isRedirectOriginAllowed,
   });
 }
 

@@ -16,6 +16,7 @@ export {
 export type {
   OidcAuthOptions,
   OidcClientLike,
+  CreateOidcAuthOptions,
 } from "./oidc.js";
 export {
   signPortalIdentity,
