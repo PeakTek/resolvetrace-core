@@ -77,4 +77,5 @@ export type {
   AuthPrincipal,
   OidcAuthOptions,
   OidcClientLike,
+  CreateOidcAuthOptions,
 } from "./auth/index.js";

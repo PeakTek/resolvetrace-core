@@ -132,6 +132,68 @@ describe("OidcAuthProvider", () => {
     ).rejects.toThrow(OidcRedirectUriError);
   });
 
+  it("accepts a redirect URI outside the static list when the injected validator allows it", async () => {
+    const client = fakeClient();
+    const p = new OidcAuthProvider({
+      client,
+      redirectUrl: "https://portal-a.example/callback",
+      // Static list has no portal-z; the registry-backed validator admits it.
+      isRedirectUriAllowed: (uri) =>
+        uri === "https://portal-z.example/api/auth/callback",
+    });
+    const { state } = await p.beginOidcFlow({
+      redirectUri: "https://portal-z.example/api/auth/callback",
+    });
+    expect(state).toBeTruthy();
+    const authorizeArgs = (client.authorizationUrl as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![0] as { redirect_uri: string };
+    expect(authorizeArgs.redirect_uri).toBe(
+      "https://portal-z.example/api/auth/callback"
+    );
+  });
+
+  it("still rejects when neither the static list nor the injected validator allows the URI", async () => {
+    const p = new OidcAuthProvider({
+      client: fakeClient(),
+      redirectUrl: "https://portal-a.example/callback",
+      isRedirectUriAllowed: (uri) =>
+        uri === "https://portal-z.example/api/auth/callback",
+    });
+    await expect(
+      p.beginOidcFlow({ redirectUri: "https://evil.example/callback" })
+    ).rejects.toThrow(OidcRedirectUriError);
+  });
+
+  it("buildLogoutUrl accepts a post-logout origin the injected origin-validator allows", async () => {
+    const endSessionUrl = vi.fn(
+      (params: { post_logout_redirect_uri: string }) =>
+        `https://idp.example/logout?r=${encodeURIComponent(
+          params.post_logout_redirect_uri
+        )}`
+    );
+    const p = new OidcAuthProvider({
+      client: fakeClient({ endSessionUrl }),
+      redirectUrl: "https://portal-a.example/callback",
+      isRedirectOriginAllowed: (origin) => origin === "https://portal-z.example",
+    });
+    const url = p.buildLogoutUrl({
+      postLogoutRedirectUri: "https://portal-z.example/login",
+    });
+    expect(url).toContain("idp.example/logout");
+    expect(endSessionUrl).toHaveBeenCalledOnce();
+  });
+
+  it("buildLogoutUrl rejects a post-logout origin no allow-list accepts", () => {
+    const p = new OidcAuthProvider({
+      client: fakeClient({ endSessionUrl: vi.fn(() => "https://idp.example/logout") }),
+      redirectUrl: "https://portal-a.example/callback",
+      isRedirectOriginAllowed: (origin) => origin === "https://portal-z.example",
+    });
+    expect(() =>
+      p.buildLogoutUrl({ postLogoutRedirectUri: "https://evil.example/login" })
+    ).toThrow(OidcRedirectUriError);
+  });
+
   it("keeps using the constructor default when no override is given", async () => {
     const client = fakeClient();
     const p = new OidcAuthProvider({
