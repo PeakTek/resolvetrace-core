@@ -132,6 +132,54 @@ describe("POST /v1/session/start", () => {
     // First-write-wins.
     expect(stored?.startedAt).toBe("2026-04-20T12:00:00.000Z");
   });
+
+  it("advertises replay.clips = single when no clip policy is injected", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart(),
+    });
+    expect(res.statusCode).toBe(201);
+    // OSS baseline: single-clip ("the whole session" as one clip).
+    expect(res.json().replay).toEqual({ clips: "single" });
+  });
+
+  it("advertises replay.clips = multi when the clip policy grants it", async () => {
+    const clipsFor = async () => "multi" as const;
+    const { app } = await buildTestApp({ replayClipPolicy: { clipsFor } });
+    close = () => app.close();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart(),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().replay).toEqual({ clips: "multi" });
+  });
+
+  it("passes the tenant id to the clip policy", async () => {
+    const seen: Array<{ tenantId: string }> = [];
+    const clipsFor = async (ctx: { tenantId: string }) => {
+      seen.push(ctx);
+      return "single" as const;
+    };
+    const { app } = await buildTestApp({ replayClipPolicy: { clipsFor } });
+    close = () => app.close();
+
+    await app.inject({
+      method: "POST",
+      url: "/v1/session/start",
+      headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+      payload: validSessionStart(),
+    });
+    expect(seen).toEqual([{ tenantId: "oss-test-tenant" }]);
+  });
 });
 
 describe("POST /v1/session/end", () => {

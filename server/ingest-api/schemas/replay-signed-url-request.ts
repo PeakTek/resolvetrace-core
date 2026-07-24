@@ -20,6 +20,10 @@ const schema = {
       type: "string",
       const: "application/vnd.resolvetrace.replay+rrweb",
     },
+    // Optional 0-based clip index (multi-clip replay). Absent / 0 ⇒ the first
+    // (only) clip. A clipIndex > 0 is accepted at the schema level but may be
+    // authorization-rejected by the replay route unless multi-clip is granted.
+    clipIndex: { type: "integer", minimum: 0 },
   },
 } as const;
 

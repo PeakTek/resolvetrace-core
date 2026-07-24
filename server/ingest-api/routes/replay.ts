@@ -31,6 +31,7 @@
 import { FastifyPluginAsync, FastifyReply } from "fastify";
 import { ObjectNotFoundError, ObjectStorage } from "../../storage/index.js";
 import type {
+  ReplayClipPolicy,
   ReplayManifestStore,
   ReplayScrubberReport,
   ReplayUploadGuard,
@@ -50,6 +51,12 @@ export interface ReplayRoutesOptions {
    * after the tenant policy passes. Absent = allow (unchanged behavior).
    */
   replayUploadGuard?: ReplayUploadGuard;
+  /**
+   * Optional deployment-supplied replay clip capability. Consulted on the
+   * signed-url leg to authorize a `clipIndex > 0`. Absent = single-clip: any
+   * `clipIndex > 0` is rejected (403). See `ReplayClipPolicy`.
+   */
+  replayClipPolicy?: ReplayClipPolicy;
   /** Signed-URL lifetime in seconds. Default 600 (10 minutes). */
   signedUrlTtlSeconds?: number;
   signedUrlRateLimit?: import("@fastify/rate-limit").RateLimitOptions;
@@ -118,6 +125,7 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
         sequence: number;
         approxBytes: number;
         contentType: string;
+        clipIndex?: number;
       };
 
       const principal = request.principal;
@@ -139,6 +147,27 @@ export const replayRoutes: FastifyPluginAsync<ReplayRoutesOptions> = async (
           error: "replay_disabled",
           message: "Replay capture is disabled for this tenant.",
         };
+      }
+
+      // Multi-clip enforcement. A `clipIndex > 0` is a second-or-later curated
+      // clip; this server records a single clip per session ("the whole
+      // session"). A clipIndex > 0 is admitted ONLY when a deployment-supplied
+      // clip policy grants multi-clip for the tenant — the default (no policy)
+      // rejects, so the capability cannot be unlocked by configuration alone.
+      // The first clip (clipIndex absent or 0) is always allowed.
+      const clipIndex = body.clipIndex ?? 0;
+      if (clipIndex > 0) {
+        const clips = opts.replayClipPolicy
+          ? await opts.replayClipPolicy.clipsFor({ tenantId })
+          : "single";
+        if (clips !== "multi") {
+          reply.code(403);
+          return {
+            error: "multi_clip_not_permitted",
+            message:
+              "This session records a single replay clip; multi-clip capture is not enabled for this tenant.",
+          };
+        }
       }
 
       const guardCtx: ReplayUploadGuardContext = {
