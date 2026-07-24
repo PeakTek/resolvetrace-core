@@ -6,6 +6,20 @@ documented here. The format is based on
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0 — the HTTP
 surface and the container image are not yet stable.
 
+## [Unreleased]
+
+### Added
+- A neutral, injectable **replay clip-capability policy** (`ReplayClipPolicy`).
+  This server records a single replay clip per session ("the whole session" as
+  one clip); a composing server can inject a policy to grant multi-clip curation
+  per tenant. Session-start now advertises `replay: { clips: "single" | "multi" }`
+  (default `single`), and the signed-url leg accepts an optional 0-based
+  `clipIndex` — a `clipIndex > 0` is rejected **403 `multi_clip_not_permitted`**
+  unless the policy grants multi (the first clip, `clipIndex` absent or `0`, is
+  always allowed). Default-DENY and absent by default (the inverse polarity of
+  the upload-authorization guard), so multi-clip can't be unlocked by
+  configuration alone — only by injecting a policy that grants it.
+
 ## [0.3.0] — 2026-07-16
 
 First tagged release. The multi-arch image publishes to

@@ -542,3 +542,124 @@ describe("replay upload guard (deployment-supplied authorization)", () => {
     expect(allow).not.toHaveBeenCalled();
   });
 });
+
+describe("multi-clip enforcement (replay clip policy)", () => {
+  let close: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    if (close) await close();
+    close = undefined;
+  });
+
+  const JSON_HEADERS = {
+    authorization: AUTH_HEADER,
+    "content-type": "application/json",
+  };
+
+  it("allows the first clip (clipIndex omitted) with no policy", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it("allows an explicit clipIndex:0 with no policy (first clip)", async () => {
+    const { app } = await buildTestApp();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest({ clipIndex: 0 }),
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it("rejects clipIndex > 0 with 403 multi_clip_not_permitted when no policy is injected", async () => {
+    const { app, storage } = await buildTestApp();
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest({ clipIndex: 1 }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("multi_clip_not_permitted");
+    // Default-deny: nothing minted.
+    expect(storage.signedUrlsMinted).toHaveLength(0);
+  });
+
+  it("rejects clipIndex > 0 with 403 when the policy grants only single", async () => {
+    const clipsFor = vi.fn(async () => "single" as const);
+    const { app } = await buildTestApp({ replayClipPolicy: { clipsFor } });
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest({ clipIndex: 2 }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("multi_clip_not_permitted");
+    expect(clipsFor).toHaveBeenCalledWith({ tenantId: "oss-test-tenant" });
+  });
+
+  it("admits clipIndex > 0 with 201 when the policy grants multi", async () => {
+    const clipsFor = vi.fn(async () => "multi" as const);
+    const { app, storage } = await buildTestApp({
+      replayClipPolicy: { clipsFor },
+    });
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest({ clipIndex: 3 }),
+    });
+    expect(res.statusCode).toBe(201);
+    expect(storage.signedUrlsMinted).toHaveLength(1);
+    expect(clipsFor).toHaveBeenCalledWith({ tenantId: "oss-test-tenant" });
+  });
+
+  it("does not consult the clip policy for the first clip (clipIndex:0)", async () => {
+    const clipsFor = vi.fn(async () => "multi" as const);
+    const { app } = await buildTestApp({ replayClipPolicy: { clipsFor } });
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest(),
+    });
+    expect(res.statusCode).toBe(201);
+    // The always-allowed first clip needs no capability check.
+    expect(clipsFor).not.toHaveBeenCalled();
+  });
+
+  it("enforces tenant replay policy before the clip check (precedence)", async () => {
+    const clipsFor = vi.fn(async () => "multi" as const);
+    const settings = new (
+      await import("../in-memory-sinks.js")
+    ).InMemorySettingsRepository();
+    await settings.set("oss-test-tenant", "replay.enabled", "false");
+    const { app } = await buildTestApp({
+      settingsRepository: settings,
+      replayClipPolicy: { clipsFor },
+    });
+    close = () => app.close();
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/replay/signed-url",
+      headers: JSON_HEADERS,
+      payload: validSignedUrlRequest({ clipIndex: 1 }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("replay_disabled");
+    expect(clipsFor).not.toHaveBeenCalled();
+  });
+});

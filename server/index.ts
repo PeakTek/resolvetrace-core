@@ -48,6 +48,8 @@ export type {
   ReplayUploadGuard,
   ReplayUploadGuardContext,
   CorsOriginValidator,
+  ReplayClipPolicy,
+  ReplayClipMode,
   PurgeStore,
   ReadinessCheck,
 } from "./ingest-api/types.js";

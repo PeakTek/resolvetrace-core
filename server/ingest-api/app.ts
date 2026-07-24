@@ -198,6 +198,7 @@ export async function buildApp(
     replayManifestStore: opts.replayManifestStore,
     settingsRepository: opts.settingsRepository,
     replayUploadGuard: opts.replayUploadGuard,
+    replayClipPolicy: opts.replayClipPolicy,
     signedUrlTtlSeconds: opts.signedUrlTtlSeconds,
     signedUrlRateLimit: perClassLimits.replay_signed_url,
     completeRateLimit: perClassLimits.replay_complete,
@@ -205,6 +206,7 @@ export async function buildApp(
   await fastify.register(sessionRoutes, {
     sessionSink: opts.sessionSink,
     rateLimitOptions: perClassLimits.session,
+    replayClipPolicy: opts.replayClipPolicy,
   });
   await fastify.register(portalRoutes, {
     sessionRepository: opts.sessionRepository,

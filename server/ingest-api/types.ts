@@ -561,6 +561,30 @@ export interface CorsOriginValidator {
   isAllowed(origin: string): boolean | Promise<boolean>;
 }
 
+/** The replay clip capability granted to a session. */
+export type ReplayClipMode = "single" | "multi";
+
+/**
+ * Deployment-supplied replay clip capability.
+ *
+ * This server records each session as a single replay clip ("the whole
+ * session"). A composing server that supports multi-clip curation — several
+ * distinct recorded clips reviewed and submitted per session — injects this
+ * policy to advertise and authorize that capability per tenant.
+ *
+ * `clipsFor` is consulted at session-start (to advertise the granted capability
+ * on the response) and on each replay upload (to authorize a clip index). When
+ * no policy is injected (the default), every session is single-clip:
+ * session-start advertises `clips: "single"` and the replay route rejects any
+ * upload tagged with `clipIndex > 0`. This is deliberately the inverse polarity
+ * of `ReplayUploadGuard` (default-allow) — multi-clip is default-DENY, so the
+ * capability cannot be unlocked by configuration alone, only by injecting a
+ * policy that grants it. It must not throw.
+ */
+export interface ReplayClipPolicy {
+  clipsFor(ctx: { tenantId: string }): Promise<ReplayClipMode>;
+}
+
 /**
  * Runtime wiring passed in to the Fastify app builder. All dependencies are
  * parameterised so tests can swap them for mocks.
@@ -665,6 +689,13 @@ export interface IngestApiDependencies {
    * When absent (the default), CORS uses the static `corsOrigins` list.
    */
   corsOriginValidator?: CorsOriginValidator;
+  /**
+   * Optional deployment-supplied replay clip capability (see `ReplayClipPolicy`).
+   * Absent by default: every session is single-clip — session-start advertises
+   * `clips: "single"` and the replay route rejects `clipIndex > 0`. A composing
+   * server injects this to advertise + authorize multi-clip curation per tenant.
+   */
+  replayClipPolicy?: ReplayClipPolicy;
 }
 
 export type RateLimitClass =

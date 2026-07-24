@@ -12,11 +12,17 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
-import { SessionSink } from "../types.js";
+import { ReplayClipMode, ReplayClipPolicy, SessionSink } from "../types.js";
 
 export interface SessionRoutesOptions {
   sessionSink: SessionSink;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
+  /**
+   * Optional deployment-supplied replay clip capability. When present, the
+   * session-start response advertises the granted clip mode; when absent, every
+   * session is single-clip. See `ReplayClipPolicy`.
+   */
+  replayClipPolicy?: ReplayClipPolicy;
 }
 
 export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
@@ -61,6 +67,15 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
         }
       );
 
+      // Advertise the replay clip capability this session is granted. Without a
+      // policy injected, every session is single-clip ("the whole session" as
+      // one clip). A composing server injects a policy to grant multi-clip.
+      const clips: ReplayClipMode = opts.replayClipPolicy
+        ? await opts.replayClipPolicy.clipsFor({
+            tenantId: principal.config.tenantId,
+          })
+        : "single";
+
       reply.code(201);
       // `supportCode` is required by the contract's SessionStartResponse
       // (Crockford base32, 8 chars). The server mints it; the SDK surfaces it
@@ -70,6 +85,7 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesOptions> = async (
         sessionId: body.sessionId,
         acceptedAt: new Date().toISOString(),
         supportCode,
+        replay: { clips },
       };
     }
   );
