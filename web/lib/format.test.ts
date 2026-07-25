@@ -3,6 +3,8 @@ import { formatDateTime, formatTenantTime, formatSupportCode } from "./format";
 
 // A fixed instant: 2026-07-24T18:05:00Z.
 const ISO = "2026-07-24T18:05:00.000Z";
+// Same date, with non-zero seconds — exercises the seconds-precision paths.
+const ISO_SEC = "2026-07-24T18:05:03.000Z";
 
 describe("formatDateTime", () => {
   it("renders an exact date-time in an explicit locale + timezone", () => {
@@ -39,6 +41,28 @@ describe("formatDateTime", () => {
   it("returns the raw input for an unparseable date", () => {
     expect(formatDateTime("not-a-date")).toBe("not-a-date");
   });
+
+  it("adds seconds when withSeconds is set", () => {
+    // New York (EDT) → 2:05:03 PM.
+    const s = formatDateTime(ISO_SEC, {
+      locale: "en-US",
+      timeZone: "America/New_York",
+      withSeconds: true,
+    });
+    expect(s).toMatch(/Jul 24, 2026/);
+    expect(s).toMatch(/2:05:03\s?PM/);
+  });
+
+  it("drops the date for a compact time-of-day when omitDate is set", () => {
+    const s = formatDateTime(ISO_SEC, {
+      locale: "en-US",
+      timeZone: "America/New_York",
+      withSeconds: true,
+      omitDate: true,
+    });
+    expect(s).toMatch(/2:05:03\s?PM/);
+    expect(s).not.toMatch(/Jul|2026/);
+  });
 });
 
 describe("formatTenantTime", () => {
@@ -67,6 +91,20 @@ describe("formatTenantTime", () => {
   it("handles a null session", () => {
     const s = formatTenantTime(null, ISO);
     expect(s).toMatch(/Jul 24, 2026/);
+  });
+
+  it("threads withSeconds + omitDate through to the formatter", () => {
+    // Full, with seconds (New York, en-US).
+    expect(formatTenantTime(session, ISO_SEC, { withSeconds: true })).toMatch(
+      /Jul 24, 2026.*2:05:03\s?PM/
+    );
+    // Compact time-of-day, with seconds.
+    const compact = formatTenantTime(session, ISO_SEC, {
+      withSeconds: true,
+      omitDate: true,
+    });
+    expect(compact).toMatch(/2:05:03\s?PM/);
+    expect(compact).not.toMatch(/Jul|2026/);
   });
 });
 
