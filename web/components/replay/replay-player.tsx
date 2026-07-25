@@ -10,6 +10,8 @@ import {
 import dynamic from "next/dynamic";
 import type { RrwebInstance } from "./rrweb-mount";
 import type { ReplaySegment } from "@/lib/replay-segments";
+import { useSession } from "@/components/session-provider";
+import { formatTenantTime } from "@/lib/format";
 
 /**
  * Session replay player (Wave-24).
@@ -83,6 +85,7 @@ export const ReplayPlayer = forwardRef<
   ReplayPlayerHandle,
   { sessionId: string }
 >(function ReplayPlayer({ sessionId }, ref) {
+  const session = useSession();
   const instanceRef = useRef<RrwebInstance | null>(null);
   const startTimeRef = useRef<number>(0);
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -238,6 +241,14 @@ export const ReplayPlayer = forwardRef<
   // ready
   const segments = state.segments;
   const active = segments[Math.min(selected, segments.length - 1)];
+  // Exact wall-clock time this recording was captured (the segment's start), in
+  // the tenant's timezone/locale — distinct from the player-relative playback
+  // clock. Seconds included so recordings captured in the same minute differ.
+  const recordedLabel = formatTenantTime(
+    session,
+    new Date(active.startedAt).toISOString(),
+    { withSeconds: true }
+  );
 
   return (
     <div className="space-y-3">
@@ -272,7 +283,12 @@ export const ReplayPlayer = forwardRef<
                     (isActive ? "text-neutral-300" : "text-neutral-400")
                   }
                 >
-                  {formatDuration(seg.durationMs)}
+                  {formatDuration(seg.durationMs)} ·{" "}
+                  {formatTenantTime(
+                    session,
+                    new Date(seg.startedAt).toISOString(),
+                    { withSeconds: true, omitDate: true }
+                  )}
                 </span>
               </button>
             );
@@ -282,6 +298,7 @@ export const ReplayPlayer = forwardRef<
       <RrwebMount
         key={`${sessionId}:${reloadKey}:${active.index}`}
         events={active.events}
+        recordedLabel={recordedLabel}
         onReady={handleReady}
       />
     </div>

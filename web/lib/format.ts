@@ -9,19 +9,30 @@ export const DEFAULT_TIMEZONE = "UTC";
  * runtime's own zone. Falls back to `en-US` / `UTC` when unset, and returns the
  * raw input for an unparseable date. Example (en-US, America/New_York):
  * "Jul 24, 2026, 2:05 PM".
+ *
+ * `withSeconds` adds seconds ("… 2:05:03 PM") — used where two events can fall
+ * in the same minute and must be told apart (e.g. replay recordings). `omitDate`
+ * drops the date part for a compact time-of-day ("2:05:03 PM").
  */
 export function formatDateTime(
   iso: string,
-  opts: { locale?: string; timeZone?: string } = {}
+  opts: {
+    locale?: string;
+    timeZone?: string;
+    withSeconds?: boolean;
+    omitDate?: boolean;
+  } = {}
 ): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const fmt = (locale: string, timeZone: string): string =>
-    new Intl.DateTimeFormat(locale, {
-      dateStyle: "medium",
-      timeStyle: "short",
+  const fmt = (locale: string, timeZone: string): string => {
+    const dtf: Intl.DateTimeFormatOptions = {
+      timeStyle: opts.withSeconds ? "medium" : "short",
       timeZone,
-    }).format(d);
+    };
+    if (!opts.omitDate) dtf.dateStyle = "medium";
+    return new Intl.DateTimeFormat(locale, dtf).format(d);
+  };
   try {
     return fmt(opts.locale || DEFAULT_LOCALE, opts.timeZone || DEFAULT_TIMEZONE);
   } catch {
@@ -43,10 +54,15 @@ export function formatTenantTime(
       }
     | null
     | undefined,
-  iso: string
+  iso: string,
+  opts: { withSeconds?: boolean; omitDate?: boolean } = {}
 ): string {
   const t = session?.tenants.find((x) => x.id === session.currentTenantId);
-  return formatDateTime(iso, { locale: t?.locale, timeZone: t?.timezone });
+  return formatDateTime(iso, {
+    locale: t?.locale,
+    timeZone: t?.timezone,
+    ...opts,
+  });
 }
 
 /**
