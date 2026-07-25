@@ -6,7 +6,8 @@ import {
   type PortalReport,
 } from "@/lib/ingest-api";
 import { portalIngestClient } from "@/lib/portal-client";
-import { formatRelative, formatSupportCode } from "@/lib/format";
+import { getSession } from "@/lib/session-cookie";
+import { formatTenantTime, formatSupportCode } from "@/lib/format";
 
 /**
  * Cross-session problem-reports surface (Wave-25). Problem reports are
@@ -59,7 +60,7 @@ function SourceBadge({ source }: { source: string | null }) {
 }
 
 export default async function ReportsPage() {
-  const result = await loadReports();
+  const [result, session] = await Promise.all([loadReports(), getSession()]);
 
   return (
     <Shell>
@@ -142,7 +143,7 @@ export default async function ReportsPage() {
                       className="whitespace-nowrap px-4 py-2 text-neutral-700"
                       title={r.capturedAt}
                     >
-                      {formatRelative(r.capturedAt)}
+                      {formatTenantTime(session, r.capturedAt)}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">
                       <Link

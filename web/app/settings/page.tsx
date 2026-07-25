@@ -1,11 +1,13 @@
 import { Shell } from "@/components/layout/shell";
 import { Card } from "@/components/ui/card";
 import { RetentionForm } from "@/components/retention-form";
+import { LocalizationForm } from "@/components/localization-form";
 import { PurgeButton } from "@/components/purge-button";
 import { WebhookForm } from "@/components/webhook-form";
 import {
   IngestApiError,
   type PortalRetentionSettings,
+  type PortalLocalizationSettings,
   type PortalWebhookSettings,
 } from "@/lib/ingest-api";
 import { portalIngestClient } from "@/lib/portal-client";
@@ -49,12 +51,31 @@ async function loadWebhook(): Promise<WebhookLoadResult> {
   }
 }
 
+type LocalizationLoadResult =
+  | { status: "ok"; data: PortalLocalizationSettings }
+  | { status: "error" };
+
+async function loadLocalization(): Promise<LocalizationLoadResult> {
+  const client = await portalIngestClient();
+  try {
+    const result = await client.getLocalizationSettings();
+    if (result.status !== "ok") return { status: "error" };
+    return { status: "ok", data: result.data };
+  } catch {
+    return { status: "error" };
+  }
+}
+
 function forever(days: number): string {
   return days === 0 ? "forever" : `${days} day${days === 1 ? "" : "s"}`;
 }
 
 export default async function SettingsPage() {
-  const [result, webhook] = await Promise.all([loadSettings(), loadWebhook()]);
+  const [result, webhook, localization] = await Promise.all([
+    loadSettings(),
+    loadWebhook(),
+    loadLocalization(),
+  ]);
 
   return (
     <Shell>
@@ -91,6 +112,42 @@ export default async function SettingsPage() {
           </Card>
         ) : (
           <>
+            {localization.status === "ok" ? (
+              <Card className="space-y-4 p-6">
+                <div className="space-y-1">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                    Localization
+                  </h2>
+                  <p className="text-sm text-neutral-600">
+                    The locale and timezone all portal timestamps are shown in.
+                    Defaults: {localization.data.defaults.locale} ·{" "}
+                    {localization.data.defaults.timezone}.
+                  </p>
+                </div>
+                {localization.data.editable ? (
+                  <LocalizationForm settings={localization.data} />
+                ) : (
+                  <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-neutral-500">
+                        Locale
+                      </dt>
+                      <dd className="text-neutral-900">
+                        {localization.data.localization.locale}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-neutral-500">
+                        Timezone
+                      </dt>
+                      <dd className="text-neutral-900">
+                        {localization.data.localization.timezone}
+                      </dd>
+                    </div>
+                  </dl>
+                )}
+              </Card>
+            ) : null}
             <Card className="space-y-4 p-6">
               <div className="space-y-1">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">

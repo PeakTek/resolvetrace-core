@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { formatRelative } from "@/lib/format";
+import { useSession } from "@/components/session-provider";
+import { formatTenantTime } from "@/lib/format";
 import type { PortalAuditEntry } from "@/lib/ingest-api";
 
 /**
@@ -70,6 +71,7 @@ export function AuditTable({
   initialEntries: PortalAuditEntry[];
   initialCursor: string | null;
 }) {
+  const session = useSession();
   const [entries, setEntries] = useState<PortalAuditEntry[]>(initialEntries);
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [loading, setLoading] = useState(false);
@@ -128,7 +130,7 @@ export function AuditTable({
                   className="whitespace-nowrap px-4 py-2 text-neutral-700"
                   title={e.occurredAt}
                 >
-                  {formatRelative(e.occurredAt)}
+                  {formatTenantTime(session, e.occurredAt)}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-neutral-700">
                   {e.actor}

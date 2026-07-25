@@ -585,6 +585,25 @@ export interface ReplayClipPolicy {
   clipsFor(ctx: { tenantId: string }): Promise<ReplayClipMode>;
 }
 
+/** A tenant's portal locale + timezone (BCP-47 + IANA). */
+export interface TenantLocale {
+  locale: string;
+  timezone: string;
+}
+
+/**
+ * Deployment-supplied per-tenant locale + timezone store, backing the portal's
+ * date/time display. A composing server that keeps these as tenant attributes
+ * (a registry) injects this so the portal's "Localization" settings can read +
+ * update them. When absent (the default), the portal has no editable
+ * localization surface — it renders with its built-in defaults. It must not
+ * throw.
+ */
+export interface TenantLocaleStore {
+  get(tenantId: string): Promise<TenantLocale | null>;
+  set(tenantId: string, value: TenantLocale): Promise<void>;
+}
+
 /**
  * Runtime wiring passed in to the Fastify app builder. All dependencies are
  * parameterised so tests can swap them for mocks.
@@ -696,6 +715,12 @@ export interface IngestApiDependencies {
    * server injects this to advertise + authorize multi-clip curation per tenant.
    */
   replayClipPolicy?: ReplayClipPolicy;
+  /**
+   * Optional deployment-supplied per-tenant locale/timezone store (see
+   * `TenantLocaleStore`). When present, the portal exposes an editable
+   * "Localization" settings surface backed by it; absent ⇒ no editable surface.
+   */
+  tenantLocaleStore?: TenantLocaleStore;
 }
 
 export type RateLimitClass =

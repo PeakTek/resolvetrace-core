@@ -19,7 +19,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { formatRelative } from "@/lib/format";
+import { useSession } from "@/components/session-provider";
+import { formatTenantTime } from "@/lib/format";
 import type { PortalSessionEvent } from "@/lib/ingest-api";
 
 type Severity = "info" | "warn" | "error";
@@ -272,6 +273,7 @@ function TimelineRow({
   /** When set, the row becomes a jump-to-time anchor for the replay player. */
   onSeekTo?: (capturedAt: string) => void;
 }) {
+  const session = useSession();
   const severity = severityOf(event);
   const category = categoryOf(event.type);
   const styles = SEVERITY_STYLES[severity];
@@ -323,7 +325,7 @@ function TimelineRow({
           className="ml-auto whitespace-nowrap text-xs text-neutral-400"
           title={event.capturedAt}
         >
-          {formatRelative(event.capturedAt)}
+          {formatTenantTime(session, event.capturedAt)}
         </span>
       </div>
       {row.summary ? (

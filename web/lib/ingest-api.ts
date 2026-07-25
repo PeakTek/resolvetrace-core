@@ -136,6 +136,24 @@ export interface PortalRetentionUpdateResult {
   updated: Partial<PortalRetentionWindows>;
 }
 
+/** Portal date/time display settings (per-tenant locale + timezone). */
+export interface PortalLocalization {
+  locale: string;
+  timezone: string;
+}
+
+export interface PortalLocalizationSettings {
+  localization: PortalLocalization;
+  defaults: PortalLocalization;
+  /** True when the deployment can persist edits (a tenant-locale store exists). */
+  editable: boolean;
+}
+
+export interface PortalLocalizationUpdateResult {
+  localization: PortalLocalization;
+  updated: Partial<PortalLocalization>;
+}
+
 export interface PortalPurgeResult {
   events: number;
   sessions: number;
@@ -278,6 +296,12 @@ export interface IngestApiClient {
   updateRetentionSettings(
     body: Partial<PortalRetentionWindows>
   ): Promise<AdminResult<PortalRetentionUpdateResult>>;
+  /** Admin-only: read the tenant's localization (locale + timezone). */
+  getLocalizationSettings(): Promise<AdminResult<PortalLocalizationSettings>>;
+  /** Admin-only: update locale/timezone (403 viewer, 400 invalid, 501 unsupported). */
+  updateLocalizationSettings(
+    body: Partial<PortalLocalization>
+  ): Promise<AdminResult<PortalLocalizationUpdateResult>>;
   /** Admin-only: run an on-demand purge (403 for viewers). */
   runPurge(): Promise<AdminResult<PortalPurgeResult>>;
   /** Admin-only: delete a session and its events/replay (403 viewer, 404 unknown). */
@@ -516,6 +540,19 @@ export function createIngestApiClient(
       return adminRequest<PortalRetentionUpdateResult>(
         "PUT",
         `/api/v1/portal/settings/retention`,
+        body
+      );
+    },
+    async getLocalizationSettings() {
+      return adminRequest<PortalLocalizationSettings>(
+        "GET",
+        `/api/v1/portal/settings/localization`
+      );
+    },
+    async updateLocalizationSettings(body) {
+      return adminRequest<PortalLocalizationUpdateResult>(
+        "PUT",
+        `/api/v1/portal/settings/localization`,
         body
       );
     },

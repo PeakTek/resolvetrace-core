@@ -57,7 +57,13 @@ export interface PortalAuthRoutesOptions {
   /** HMAC secret for the identity token. Required for multi-tenant tenant-select. */
   portalTokenSecret?: string;
   /** OSS single-tenant descriptor surfaced when no membershipProvider is injected. */
-  defaultPortalTenant?: { id: string; displayName: string };
+  defaultPortalTenant?: {
+    id: string;
+    displayName: string;
+    /** Optional BCP-47 locale + IANA timezone for portal time formatting. */
+    locale?: string;
+    timezone?: string;
+  };
   /** Capability descriptor for the `config` probe. Defaults to password mode. */
   portalAuthConfig?: PortalAuthConfig;
   rateLimitOptions?: import("@fastify/rate-limit").RateLimitOptions;
@@ -82,7 +88,15 @@ export const portalAuthRoutes: FastifyPluginAsync<
       return opts.membershipProvider.listForUser(userId);
     }
     const t = opts.defaultPortalTenant ?? { id: "default", displayName: "Default" };
-    return [{ tenantId: t.id, displayName: t.displayName, role: roles[0] ?? "admin" }];
+    return [
+      {
+        tenantId: t.id,
+        displayName: t.displayName,
+        role: roles[0] ?? "admin",
+        ...(t.locale ? { locale: t.locale } : {}),
+        ...(t.timezone ? { timezone: t.timezone } : {}),
+      },
+    ];
   }
 
   /** One membership: injected provider, else the synthetic single tenant. */
@@ -96,7 +110,13 @@ export const portalAuthRoutes: FastifyPluginAsync<
     }
     const t = opts.defaultPortalTenant ?? { id: "default", displayName: "Default" };
     if (tenantId !== t.id) return null;
-    return { tenantId: t.id, displayName: t.displayName, role: roles[0] ?? "admin" };
+    return {
+      tenantId: t.id,
+      displayName: t.displayName,
+      role: roles[0] ?? "admin",
+      ...(t.locale ? { locale: t.locale } : {}),
+      ...(t.timezone ? { timezone: t.timezone } : {}),
+    };
   }
 
   /** Scopes + (managed) the minted per-tenant credential for a membership. */
@@ -226,6 +246,8 @@ export const portalAuthRoutes: FastifyPluginAsync<
         tenants: memberships.map((m) => ({
           id: m.tenantId,
           displayName: m.displayName,
+          ...(m.locale ? { locale: m.locale } : {}),
+          ...(m.timezone ? { timezone: m.timezone } : {}),
         })),
         currentTenantId: current.tenantId,
         role: current.role,
@@ -453,6 +475,8 @@ export const portalAuthRoutes: FastifyPluginAsync<
       tenants: memberships.map((m) => ({
         id: m.tenantId,
         displayName: m.displayName,
+        ...(m.locale ? { locale: m.locale } : {}),
+        ...(m.timezone ? { timezone: m.timezone } : {}),
       })),
     };
   });

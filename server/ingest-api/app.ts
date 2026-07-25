@@ -228,6 +228,8 @@ export async function buildApp(
     // Webhook settings + "send test" action (feature #5).
     webhookHttpClient: opts.webhookHttpClient,
     webhookDispatchPolicy: opts.webhookDispatchPolicy,
+    // Per-tenant localization (portal date/time display), when injected.
+    tenantLocaleStore: opts.tenantLocaleStore,
   });
   // The portal-auth contract is only meaningful when an auth provider is wired.
   if (opts.authProvider) {

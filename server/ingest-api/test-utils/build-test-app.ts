@@ -29,6 +29,7 @@ import {
   RateLimitClass,
   ReadinessCheck,
   ReplayClipPolicy,
+  TenantLocaleStore,
   ReplayManifestStore,
   ReplayUploadGuard,
   SessionRepository,
@@ -105,6 +106,8 @@ export interface TestAppOverrides<
   replayUploadGuard?: ReplayUploadGuard;
   /** Deployment-supplied replay clip capability. Defaults to absent (single-clip). */
   replayClipPolicy?: ReplayClipPolicy;
+  /** Deployment-supplied per-tenant locale/timezone store. Defaults to absent. */
+  tenantLocaleStore?: TenantLocaleStore;
   /** Static CORS origin allow-list. Empty/absent ⇒ reflect any origin. */
   corsOrigins?: string[];
   /** Deployment-supplied dynamic CORS origin validator. Defaults to absent. */
@@ -184,6 +187,7 @@ export async function buildTestApp<
     webhookDispatchPolicy: overrides.webhookDispatchPolicy,
     replayUploadGuard: overrides.replayUploadGuard,
     replayClipPolicy: overrides.replayClipPolicy,
+    tenantLocaleStore: overrides.tenantLocaleStore,
     corsOrigins: overrides.corsOrigins,
     corsOriginValidator: overrides.corsOriginValidator,
     disableRequestLogging: true,
