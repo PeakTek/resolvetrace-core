@@ -50,6 +50,8 @@ export type {
   CorsOriginValidator,
   ReplayClipPolicy,
   ReplayClipMode,
+  TenantLocaleStore,
+  TenantLocale,
   PurgeStore,
   ReadinessCheck,
 } from "./ingest-api/types.js";

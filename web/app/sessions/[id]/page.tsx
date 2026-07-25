@@ -11,7 +11,7 @@ import {
   type PortalSessionDetailResponse,
 } from "@/lib/ingest-api";
 import { portalIngestClient } from "@/lib/portal-client";
-import { formatRelative } from "@/lib/format";
+import { formatTenantTime } from "@/lib/format";
 import { getSession } from "@/lib/session-cookie";
 import { hasScope, SCOPE_TENANT_ADMIN } from "@/lib/scopes";
 
@@ -154,7 +154,7 @@ export default async function SessionDetailPage({
                 Started
               </dt>
               <dd className="text-neutral-900" title={session.startedAt}>
-                {formatRelative(session.startedAt)}
+                {formatTenantTime(portalSession, session.startedAt)}
               </dd>
             </div>
             <div>
@@ -165,7 +165,9 @@ export default async function SessionDetailPage({
                 className="text-neutral-900"
                 title={session.endedAt ?? undefined}
               >
-                {session.endedAt ? formatRelative(session.endedAt) : "—"}
+                {session.endedAt
+                  ? formatTenantTime(portalSession, session.endedAt)
+                  : "—"}
               </dd>
             </div>
             <div>

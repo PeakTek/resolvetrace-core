@@ -19,6 +19,10 @@ const DEV_SECRET = "resolvetrace-dev-portal-secret-change-me";
 export interface PortalTenantRef {
   id: string;
   displayName: string;
+  /** BCP-47 locale for portal date/time formatting (optional; tenant attribute). */
+  locale?: string;
+  /** IANA timezone for portal timestamp rendering (optional; tenant attribute). */
+  timezone?: string;
 }
 
 /** Full portal session (sealed in the encrypted cookie). */

@@ -38,7 +38,13 @@ const adminAuth: AuthProvider = {
 class FakeMemberships implements MembershipProvider {
   private readonly rows: Record<string, PortalTenantMembership[]> = {
     "sub-123": [
-      { tenantId: "t-A", displayName: "Acme", role: "admin" },
+      {
+        tenantId: "t-A",
+        displayName: "Acme",
+        role: "admin",
+        locale: "en-GB",
+        timezone: "Europe/London",
+      },
       { tenantId: "t-B", displayName: "Beta", role: "support" },
     ],
   };
@@ -107,9 +113,15 @@ describe("portal-auth login (managed multi-tenant)", () => {
       email: "u@example.test",
       roles: ["member"],
     });
-    // Both memberships surfaced for the switcher.
+    // Both memberships surfaced for the switcher; a tenant's locale/timezone
+    // (when set) rides along for the portal's date/time formatting.
     expect(body.tenants).toEqual([
-      { id: "t-A", displayName: "Acme" },
+      {
+        id: "t-A",
+        displayName: "Acme",
+        locale: "en-GB",
+        timezone: "Europe/London",
+      },
       { id: "t-B", displayName: "Beta" },
     ]);
     // Current tenant = first membership (admin of Acme) → admin scopes.

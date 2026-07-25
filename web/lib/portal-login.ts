@@ -27,7 +27,12 @@ export const tenantPin = (): { tenantId?: string } =>
 /** Success shape returned by the backend login + callback endpoints. */
 export interface PortalLoginResult {
   user: { userId: string; email: string; roles: string[] };
-  tenants: { id: string; displayName: string }[];
+  tenants: {
+    id: string;
+    displayName: string;
+    locale?: string;
+    timezone?: string;
+  }[];
   currentTenantId: string;
   role?: string;
   scopes?: string[];

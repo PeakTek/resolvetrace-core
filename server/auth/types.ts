@@ -130,6 +130,16 @@ export interface PortalTenantRef {
   id: string;
   /** Human-readable tenant name for the tenant switcher. */
   displayName: string;
+  /**
+   * BCP-47 locale the portal formats dates/times with (e.g. `en-US`). Optional;
+   * absent ⇒ the portal's default. Set per tenant in the registry.
+   */
+  locale?: string;
+  /**
+   * IANA timezone the portal renders timestamps in (e.g. `America/New_York`).
+   * Optional; absent ⇒ the portal's default (UTC).
+   */
+  timezone?: string;
 }
 
 /** A user's membership in one tenant: the tenant plus the user's role there. */
@@ -142,6 +152,10 @@ export interface PortalTenantMembership {
    * never branches on the role name for enforcement; it enforces scopes.
    */
   role: string;
+  /** BCP-47 locale for portal date/time formatting (optional; tenant attribute). */
+  locale?: string;
+  /** IANA timezone for portal timestamp rendering (optional; tenant attribute). */
+  timezone?: string;
 }
 
 /**

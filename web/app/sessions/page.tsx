@@ -9,7 +9,8 @@ import {
   type PortalSessionListResponse,
 } from "@/lib/ingest-api";
 import { portalIngestClient } from "@/lib/portal-client";
-import { formatRelative, formatSupportCode } from "@/lib/format";
+import { getSession } from "@/lib/session-cookie";
+import { formatTenantTime, formatSupportCode } from "@/lib/format";
 
 type LoadResult =
   | { status: "ok"; data: PortalSessionListResponse }
@@ -33,7 +34,11 @@ export default async function SessionsPage({
 }: {
   searchParams: Promise<{ deleted?: string }>;
 }) {
-  const [result, sp] = await Promise.all([loadSessions(), searchParams]);
+  const [result, sp, session] = await Promise.all([
+    loadSessions(),
+    searchParams,
+    getSession(),
+  ]);
 
   return (
     <Shell>
@@ -118,13 +123,13 @@ export default async function SessionsPage({
                       className="px-4 py-2 text-neutral-700"
                       title={s.startedAt}
                     >
-                      {formatRelative(s.startedAt)}
+                      {formatTenantTime(session, s.startedAt)}
                     </td>
                     <td
                       className="px-4 py-2 text-neutral-700"
                       title={s.endedAt ?? undefined}
                     >
-                      {s.endedAt ? formatRelative(s.endedAt) : "—"}
+                      {s.endedAt ? formatTenantTime(session, s.endedAt) : "—"}
                     </td>
                     <td className="px-4 py-2 text-neutral-700">
                       {s.eventCount}

@@ -21,6 +21,7 @@ import type {
   AuditSink,
   PurgeStore,
   SettingsRepository,
+  TenantLocaleStore,
 } from "../types.js";
 import type { RetentionConfig } from "../retention-config.js";
 import {
@@ -74,6 +75,41 @@ export interface RetentionRoutesOptions {
   webhookHttpClient?: WebhookHttpClient;
   /** Optional retry/backoff/timeout overrides for the test dispatch. */
   webhookDispatchPolicy?: Partial<WebhookDispatchPolicy>;
+  /**
+   * Optional per-tenant locale/timezone store backing the portal "Localization"
+   * settings. Absent ⇒ localization is read-only defaults (not editable).
+   */
+  tenantLocaleStore?: TenantLocaleStore;
+}
+
+/** Portal date/time display defaults when a tenant has no stored locale/tz. */
+const DEFAULT_LOCALE = "en-US";
+const DEFAULT_TIMEZONE = "UTC";
+
+/** BCP-47-ish shape check (language + optional subtags). Length-bounded. */
+function isValidLocale(raw: unknown): raw is string {
+  if (typeof raw !== "string") return false;
+  const s = raw.trim();
+  if (s.length < 2 || s.length > 35) return false;
+  if (!/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(s)) return false;
+  try {
+    Intl.getCanonicalLocales(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `tz` is a valid IANA timezone the runtime accepts. */
+function isValidTimezone(raw: unknown): raw is string {
+  if (typeof raw !== "string" || raw.trim().length === 0) return false;
+  try {
+    // Throws RangeError for an unknown IANA zone.
+    new Intl.DateTimeFormat("en-US", { timeZone: raw.trim() });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Same actor derivation as the portal read routes — never logs the secret. */
@@ -248,6 +284,108 @@ export const retentionRoutes: FastifyPluginAsync<RetentionRoutesOptions> = async
           replayDays: windows.replayDays,
         },
         updated: changed,
+      };
+    }
+  );
+
+  // --- Read tenant localization (portal date/time display) --------------
+  // Admin read. Backed by the injected TenantLocaleStore (a tenant attribute).
+  // When no store is injected the portal has no editable localization surface
+  // and renders with the built-in defaults.
+  fastify.get(
+    "/api/v1/portal/settings/localization",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      const stored = opts.tenantLocaleStore
+        ? await opts.tenantLocaleStore.get(principal.config.tenantId)
+        : null;
+      return {
+        localization: {
+          locale: stored?.locale ?? DEFAULT_LOCALE,
+          timezone: stored?.timezone ?? DEFAULT_TIMEZONE,
+        },
+        defaults: { locale: DEFAULT_LOCALE, timezone: DEFAULT_TIMEZONE },
+        editable: Boolean(opts.tenantLocaleStore),
+      };
+    }
+  );
+
+  // --- Update tenant localization (persisted, audited) ------------------
+  fastify.put(
+    "/api/v1/portal/settings/localization",
+    { config: { rateLimit: opts.rateLimitOptions } },
+    async (request, reply) => {
+      const principal = requireAdmin(request, reply);
+      if (!principal) return reply;
+
+      if (!opts.tenantLocaleStore) {
+        reply.code(501);
+        return {
+          error: "not_supported",
+          message: "Localization is not editable on this deployment.",
+        };
+      }
+
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (!("locale" in body) && !("timezone" in body)) {
+        reply.code(400);
+        return {
+          error: "invalid_request",
+          message: "Provide at least one of locale, timezone.",
+        };
+      }
+
+      const tenantId = principal.config.tenantId;
+      const current = (await opts.tenantLocaleStore.get(tenantId)) ?? {
+        locale: DEFAULT_LOCALE,
+        timezone: DEFAULT_TIMEZONE,
+      };
+
+      let locale = current.locale;
+      if ("locale" in body) {
+        if (!isValidLocale(body.locale)) {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message: "`locale` must be a BCP-47 tag (e.g. en-US).",
+          };
+        }
+        locale = body.locale.trim();
+      }
+      let timezone = current.timezone;
+      if ("timezone" in body) {
+        if (!isValidTimezone(body.timezone)) {
+          reply.code(400);
+          return {
+            error: "invalid_request",
+            message:
+              "`timezone` must be a valid IANA timezone (e.g. America/New_York).",
+          };
+        }
+        timezone = body.timezone.trim();
+      }
+
+      await opts.tenantLocaleStore.set(tenantId, { locale, timezone });
+
+      await recordAudit(
+        opts.auditSink,
+        tenantId,
+        {
+          actor: actorFor(principal),
+          action: AuditAction.SETTINGS_UPDATE,
+          targetType: "localization",
+          targetId: null,
+          metadata: { localization: { locale, timezone } },
+        },
+        request.log
+      );
+
+      return {
+        localization: { locale, timezone },
+        updated: { locale, timezone },
       };
     }
   );

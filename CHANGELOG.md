@@ -27,6 +27,15 @@ surface and the container image are not yet stable.
   per-tenant portal callback URLs are honored at runtime with no restart — the
   same move already made for CORS origins. Absent ⇒ static list only (unchanged);
   the IdP's own exact redirect-URI allow-list stays the primary enforcement.
+- Portal: **exact per-tenant date/time display**. Timestamps now render as exact
+  local times formatted in the tenant's **locale + timezone** (e.g. "Jul 24,
+  2026, 2:05 PM") instead of relative strings ("2 minutes ago"). The locale +
+  timezone ride the tenant-membership rail (login/`session` responses now carry
+  `locale`/`timezone` per tenant), and a new **injectable `TenantLocaleStore`**
+  seam backs an admin-gated `GET`/`PUT /api/v1/portal/settings/localization`
+  route so a portal admin can edit them; absent ⇒ read-only defaults (`en-US` /
+  `UTC`). Because the timezone is explicit, formatting is deterministic on the
+  server and the browser.
 
 ## [0.3.0] — 2026-07-16
 

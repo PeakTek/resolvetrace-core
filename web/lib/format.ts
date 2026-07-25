@@ -1,26 +1,52 @@
+/** Portal date/time display defaults when a tenant has no locale/timezone. */
+export const DEFAULT_LOCALE = "en-US";
+export const DEFAULT_TIMEZONE = "UTC";
+
 /**
- * Human-readable relative-time formatter. Returns strings like
- * "5 seconds ago", "2 minutes ago", "3 hours ago", "4 days ago".
- * Falls back to `toLocaleString()` for anything older than ~30 days.
+ * Format an ISO timestamp as an EXACT date-time, in an explicit locale +
+ * timezone. Because the timezone is explicit, the output is deterministic
+ * across the Node server (SSR) and the browser — it never depends on the
+ * runtime's own zone. Falls back to `en-US` / `UTC` when unset, and returns the
+ * raw input for an unparseable date. Example (en-US, America/New_York):
+ * "Jul 24, 2026, 2:05 PM".
  */
-export function formatRelative(iso: string, now: Date = new Date()): string {
-  const then = new Date(iso);
-  if (Number.isNaN(then.getTime())) {
-    return iso;
+export function formatDateTime(
+  iso: string,
+  opts: { locale?: string; timeZone?: string } = {}
+): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const fmt = (locale: string, timeZone: string): string =>
+    new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone,
+    }).format(d);
+  try {
+    return fmt(opts.locale || DEFAULT_LOCALE, opts.timeZone || DEFAULT_TIMEZONE);
+  } catch {
+    // A stored locale/timezone the runtime rejects — never throw in render.
+    return fmt(DEFAULT_LOCALE, DEFAULT_TIMEZONE);
   }
-  const diffMs = now.getTime() - then.getTime();
-  if (diffMs < 0) {
-    return then.toLocaleString();
-  }
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"} ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
-  return then.toLocaleString();
+}
+
+/**
+ * Format `iso` using the CURRENT tenant's locale + timezone from a portal
+ * session. Accepts the shared session shape (`getSession()` server-side or
+ * `useSession()` client-side); both carry `tenants[]` + `currentTenantId`.
+ */
+export function formatTenantTime(
+  session:
+    | {
+        tenants: { id: string; locale?: string; timezone?: string }[];
+        currentTenantId?: string;
+      }
+    | null
+    | undefined,
+  iso: string
+): string {
+  const t = session?.tenants.find((x) => x.id === session.currentTenantId);
+  return formatDateTime(iso, { locale: t?.locale, timeZone: t?.timezone });
 }
 
 /**
