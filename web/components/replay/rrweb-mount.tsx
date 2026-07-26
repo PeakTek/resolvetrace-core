@@ -57,13 +57,9 @@ function recordedDimensions(events: unknown[]): { w: number; h: number } | null 
 
 export default function RrwebMount({
   events,
-  recordedLabel,
   onReady,
 }: {
   events: unknown[];
-  /** Exact wall-clock time this recording was captured, pre-formatted in the
-   *  tenant's timezone/locale by the caller. Shown next to the playback clock. */
-  recordedLabel?: string;
   onReady?: (inst: RrwebInstance) => void;
 }) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -311,14 +307,6 @@ export default function RrwebMount({
         <span className="font-mono text-xs tabular-nums text-neutral-500">
           {formatClock(currentTime)} / {formatClock(totalTime)}
         </span>
-        {recordedLabel ? (
-          <span
-            className="text-xs text-neutral-500"
-            title="When this recording was captured"
-          >
-            <span className="text-neutral-400">Recorded</span> {recordedLabel}
-          </span>
-        ) : null}
         <input
           type="range"
           min={0}
