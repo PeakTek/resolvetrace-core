@@ -241,14 +241,6 @@ export const ReplayPlayer = forwardRef<
   // ready
   const segments = state.segments;
   const active = segments[Math.min(selected, segments.length - 1)];
-  // Exact wall-clock time this recording was captured (the segment's start), in
-  // the tenant's timezone/locale — distinct from the player-relative playback
-  // clock. Seconds included so recordings captured in the same minute differ.
-  const recordedLabel = formatTenantTime(
-    session,
-    new Date(active.startedAt).toISOString(),
-    { withSeconds: true }
-  );
 
   return (
     <div className="space-y-3">
@@ -269,6 +261,11 @@ export const ReplayPlayer = forwardRef<
                   setSelected(seg.index);
                 }}
                 aria-pressed={isActive}
+                title={`Recorded ${formatTenantTime(
+                  session,
+                  new Date(seg.startedAt).toISOString(),
+                  { withSeconds: true }
+                )}`}
                 className={
                   "rounded-md px-2.5 py-1 text-xs font-medium tabular-nums transition-colors " +
                   (isActive
@@ -283,12 +280,7 @@ export const ReplayPlayer = forwardRef<
                     (isActive ? "text-neutral-300" : "text-neutral-400")
                   }
                 >
-                  {formatDuration(seg.durationMs)} ·{" "}
-                  {formatTenantTime(
-                    session,
-                    new Date(seg.startedAt).toISOString(),
-                    { withSeconds: true, omitDate: true }
-                  )}
+                  {formatDuration(seg.durationMs)}
                 </span>
               </button>
             );
@@ -298,7 +290,6 @@ export const ReplayPlayer = forwardRef<
       <RrwebMount
         key={`${sessionId}:${reloadKey}:${active.index}`}
         events={active.events}
-        recordedLabel={recordedLabel}
         onReady={handleReady}
       />
     </div>
