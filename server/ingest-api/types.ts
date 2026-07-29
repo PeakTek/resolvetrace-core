@@ -399,6 +399,18 @@ export interface ReplayManifestInput {
 }
 
 /**
+ * Tenant-scoped replay-usage aggregate — neutral counts derived from the
+ * manifest for a managed deployment's usage metering. No pricing / billing /
+ * retention semantics live here.
+ */
+export interface ReplayUsageAggregate {
+  /** Distinct sessions that recorded ≥1 replay chunk in the window. */
+  readonly replaySessions: number;
+  /** Total durably-accepted replay bytes in the window. */
+  readonly bytes: number;
+}
+
+/**
  * Persistence + read surface for the replay chunk manifest (migration 006).
  * Written on `/v1/replay/complete`, read by the portal player read-side, and
  * swept by retention / targeted erasure.
@@ -420,6 +432,19 @@ export interface ReplayManifestStore {
     tenantId: string,
     sessionId: string
   ): Promise<ReplayManifestRecord[]>;
+
+  /**
+   * Tenant-scoped usage aggregate over `[periodStart, periodEnd)` by
+   * `uploaded_at` (server durable-accept time): the count of distinct sessions
+   * that recorded ≥1 replay chunk, plus total durably-accepted bytes. Neutral
+   * counts only — pricing / billing / retention weighting is a deployment
+   * concern layered on top, never here.
+   */
+  aggregateUsage(
+    tenantId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<ReplayUsageAggregate>;
 }
 
 /**

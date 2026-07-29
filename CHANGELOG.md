@@ -9,6 +9,12 @@ surface and the container image are not yet stable.
 ## [Unreleased]
 
 ### Added
+- **Tenant-scoped replay-usage aggregate** (`ReplayManifestStore.aggregateUsage`) —
+  a neutral read over the replay manifest returning the count of distinct sessions
+  that recorded a clip plus total durably-accepted bytes for an `uploaded_at`
+  window (the raw material a composing server rolls up for usage metering). No
+  pricing/billing logic in core; a supporting `(tenant_id, uploaded_at)` index
+  (migration 008) keeps the offline rollup off the ingest hot path.
 - A neutral, injectable **replay clip-capability policy** (`ReplayClipPolicy`).
   This server records a single replay clip per session ("the whole session" as
   one clip); a composing server can inject a policy to grant multi-clip curation

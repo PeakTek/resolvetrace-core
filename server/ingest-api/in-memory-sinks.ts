@@ -20,6 +20,7 @@ import {
   ReplayManifestInput,
   ReplayManifestRecord,
   ReplayManifestStore,
+  ReplayUsageAggregate,
   SessionEndRecord,
   SessionRecord,
   SessionRepository,
@@ -304,6 +305,25 @@ export class InMemoryReplayManifestStore implements ReplayManifestStore {
     return [...this.rowsFor(tenantId).values()]
       .filter((r) => r.sessionId === sessionId)
       .sort((a, b) => a.sequence - b.sequence);
+  }
+
+  async aggregateUsage(
+    tenantId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<ReplayUsageAggregate> {
+    const from = periodStart.getTime();
+    const to = periodEnd.getTime();
+    const sessions = new Set<string>();
+    let bytes = 0;
+    for (const r of this.rowsFor(tenantId).values()) {
+      const t = Date.parse(r.uploadedAt);
+      if (t >= from && t < to) {
+        sessions.add(r.sessionId);
+        bytes += r.bytes;
+      }
+    }
+    return { replaySessions: sessions.size, bytes };
   }
 
   /** Visible for tests / purge delegation: exact keys for a session. */
