@@ -45,6 +45,7 @@ export type {
   AuditRepository,
   SettingsRepository,
   ReplayManifestStore,
+  ReplayUsageAggregate,
   ReplayUploadGuard,
   ReplayUploadGuardContext,
   CorsOriginValidator,

@@ -808,6 +808,44 @@ describe("PostgresReplayManifestStore", () => {
     expect(rows[0]!.bytes).toBe(1024);
     expect(rows[0]!.scrubber).toMatchObject({ version: "sdk@0.1.0" });
   });
+
+  it("aggregateUsage counts distinct sessions + sums bytes over the uploaded_at window", async () => {
+    let captured: { text: string; params: unknown[] | undefined } | undefined;
+    const pool = new FakePool((text, params) => {
+      if (text.includes("COUNT(DISTINCT session_id)")) {
+        captured = { text, params };
+        return ok([{ sessions: "3", bytes: "5242880" }]);
+      }
+      return undefined;
+    });
+    const store = new PostgresReplayManifestStore(pool);
+    const start = new Date("2026-07-01T00:00:00.000Z");
+    const end = new Date("2026-08-01T00:00:00.000Z");
+
+    const agg = await store.aggregateUsage("t", start, end);
+    expect(agg).toEqual({ replaySessions: 3, bytes: 5242880 });
+    // Tenant-scoped, windowed by uploaded_at; params in order.
+    expect(captured?.text).toContain("FROM replay_manifest");
+    expect(captured?.text).toContain("COUNT(DISTINCT session_id)");
+    expect(captured?.text).toContain("SUM(bytes)");
+    expect(captured?.text).toContain("tenant_id = $1");
+    expect(captured?.params).toEqual(["t", start, end]);
+  });
+
+  it("aggregateUsage returns zeroes for an empty window", async () => {
+    const pool = new FakePool((text) =>
+      text.includes("COUNT(DISTINCT session_id)")
+        ? ok([{ sessions: "0", bytes: "0" }])
+        : undefined
+    );
+    const store = new PostgresReplayManifestStore(pool);
+    const agg = await store.aggregateUsage(
+      "t",
+      new Date("2026-07-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z")
+    );
+    expect(agg).toEqual({ replaySessions: 0, bytes: 0 });
+  });
 });
 
 describe("PostgresPurgeStore — replay manifest sweep (Wave-24)", () => {

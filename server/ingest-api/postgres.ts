@@ -27,6 +27,7 @@ import {
   ReplayManifestInput,
   ReplayManifestRecord,
   ReplayManifestStore,
+  ReplayUsageAggregate,
   ReplayScrubberReport,
   SessionEndRecord,
   SessionRecord,
@@ -884,6 +885,29 @@ export class PostgresReplayManifestStore implements ReplayManifestStore {
       [tenantId, sessionId]
     );
     return res.rows.map(mapManifest);
+  }
+
+  async aggregateUsage(
+    tenantId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<ReplayUsageAggregate> {
+    // Cast the aggregates to text so pg returns bigint-safe strings we parse;
+    // a window with no chunks yields COUNT 0 / COALESCE'd 0.
+    const res = await this.pool.query<{ sessions: string; bytes: string }>(
+      `SELECT COUNT(DISTINCT session_id)::text AS sessions,
+              COALESCE(SUM(bytes), 0)::text     AS bytes
+         FROM replay_manifest
+        WHERE tenant_id = $1
+          AND uploaded_at >= $2
+          AND uploaded_at <  $3`,
+      [tenantId, periodStart, periodEnd]
+    );
+    const row = res.rows[0];
+    return {
+      replaySessions: Number(row?.sessions ?? "0"),
+      bytes: Number(row?.bytes ?? "0"),
+    };
   }
 }
 
