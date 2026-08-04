@@ -27,6 +27,7 @@ import { healthRoutes } from "./routes/health.js";
 import { portalRoutes } from "./routes/portal.js";
 import { portalAuthRoutes } from "./routes/portal-auth.js";
 import { retentionRoutes } from "./routes/retention.js";
+import { usageRoutes } from "./routes/usage.js";
 
 export interface BuildAppOptions extends IngestApiDependencies {
   /** Pino log level. Defaults to env / "info". */
@@ -230,6 +231,14 @@ export async function buildApp(
     webhookDispatchPolicy: opts.webhookDispatchPolicy,
     // Per-tenant localization (portal date/time display), when injected.
     tenantLocaleStore: opts.tenantLocaleStore,
+  });
+  // Per-tenant usage view (admin-only): replay-session count + GB-month, plus
+  // optional composing-server annotation rows.
+  await fastify.register(usageRoutes, {
+    replayManifestStore: opts.replayManifestStore,
+    retentionConfig: opts.retentionConfig,
+    rateLimitOptions: perClassLimits.session,
+    usageAnnotations: opts.usageAnnotations,
   });
   // The portal-auth contract is only meaningful when an auth provider is wired.
   if (opts.authProvider) {

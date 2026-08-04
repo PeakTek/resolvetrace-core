@@ -53,6 +53,8 @@ export type {
   ReplayClipMode,
   TenantLocaleStore,
   TenantLocale,
+  PortalUsageAnnotations,
+  UsageAnnotationRow,
   PurgeStore,
   ReadinessCheck,
 } from "./ingest-api/types.js";
