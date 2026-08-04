@@ -30,6 +30,7 @@ import {
   ReadinessCheck,
   ReplayClipPolicy,
   TenantLocaleStore,
+  PortalUsageAnnotations,
   ReplayManifestStore,
   ReplayUploadGuard,
   SessionRepository,
@@ -108,6 +109,8 @@ export interface TestAppOverrides<
   replayClipPolicy?: ReplayClipPolicy;
   /** Deployment-supplied per-tenant locale/timezone store. Defaults to absent. */
   tenantLocaleStore?: TenantLocaleStore;
+  /** Composing-server usage annotations (portal usage view). Defaults to absent. */
+  usageAnnotations?: PortalUsageAnnotations;
   /** Static CORS origin allow-list. Empty/absent ⇒ reflect any origin. */
   corsOrigins?: string[];
   /** Deployment-supplied dynamic CORS origin validator. Defaults to absent. */
@@ -188,6 +191,7 @@ export async function buildTestApp<
     replayUploadGuard: overrides.replayUploadGuard,
     replayClipPolicy: overrides.replayClipPolicy,
     tenantLocaleStore: overrides.tenantLocaleStore,
+    usageAnnotations: overrides.usageAnnotations,
     corsOrigins: overrides.corsOrigins,
     corsOriginValidator: overrides.corsOriginValidator,
     disableRequestLogging: true,

@@ -630,6 +630,30 @@ export interface TenantLocaleStore {
 }
 
 /**
+ * An opaque label/value row a composing server can attach to the portal usage
+ * view. Core renders these rows verbatim and NEVER authors their content — any
+ * commercial/deployment-specific semantics live entirely in the composing
+ * layer, keeping core neutral.
+ */
+export interface UsageAnnotationRow {
+  label: string;
+  value: string;
+}
+
+/**
+ * Optional composing-server source of extra rows for a tenant's portal usage
+ * view. Given a tenant + period, returns opaque display rows, or `null` when the
+ * composing server chooses to surface none.
+ */
+export interface PortalUsageAnnotations {
+  get(
+    tenantId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<UsageAnnotationRow[] | null>;
+}
+
+/**
  * Runtime wiring passed in to the Fastify app builder. All dependencies are
  * parameterised so tests can swap them for mocks.
  */
@@ -746,6 +770,12 @@ export interface IngestApiDependencies {
    * "Localization" settings surface backed by it; absent ⇒ no editable surface.
    */
   tenantLocaleStore?: TenantLocaleStore;
+  /**
+   * Optional composing-server annotations for the portal usage view (see
+   * `PortalUsageAnnotations`). When present, the admin usage page renders the
+   * returned opaque label/value rows; absent ⇒ usage is shown with counts only.
+   */
+  usageAnnotations?: PortalUsageAnnotations;
 }
 
 export type RateLimitClass =

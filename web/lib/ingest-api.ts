@@ -149,6 +149,23 @@ export interface PortalLocalizationSettings {
   editable: boolean;
 }
 
+/** An opaque label/value row a composing server attaches to the usage view. */
+export interface PortalUsageAnnotationRow {
+  label: string;
+  value: string;
+}
+
+/** Admin-only usage view for the current calendar month. */
+export interface PortalUsage {
+  periodStart: string;
+  periodEnd: string;
+  replaySessions: number;
+  bytes: number;
+  gbMonth: number;
+  /** Composing-server rows (e.g. plan), or null when none are surfaced. */
+  annotations: PortalUsageAnnotationRow[] | null;
+}
+
 export interface PortalLocalizationUpdateResult {
   localization: PortalLocalization;
   updated: Partial<PortalLocalization>;
@@ -298,6 +315,8 @@ export interface IngestApiClient {
   ): Promise<AdminResult<PortalRetentionUpdateResult>>;
   /** Admin-only: read the tenant's localization (locale + timezone). */
   getLocalizationSettings(): Promise<AdminResult<PortalLocalizationSettings>>;
+  /** Admin-only: this month's usage (replay sessions + GB-month + annotations). */
+  getUsage(): Promise<AdminResult<PortalUsage>>;
   /** Admin-only: update locale/timezone (403 viewer, 400 invalid, 501 unsupported). */
   updateLocalizationSettings(
     body: Partial<PortalLocalization>
@@ -548,6 +567,9 @@ export function createIngestApiClient(
         "GET",
         `/api/v1/portal/settings/localization`
       );
+    },
+    async getUsage() {
+      return adminRequest<PortalUsage>("GET", `/api/v1/portal/usage`);
     },
     async updateLocalizationSettings(body) {
       return adminRequest<PortalLocalizationUpdateResult>(
