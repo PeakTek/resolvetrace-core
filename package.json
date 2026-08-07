@@ -40,7 +40,7 @@
     "ajv-formats": "^3.0.1",
     "bcrypt": "^6.0.0",
     "fastify": "^5.8.5",
-    "fastify-plugin": "^5.1.0",
+    "fastify-plugin": "^6.0.0",
     "openid-client": "^6.8.4",
     "pg": "^8.13.1",
     "pino": "^10.3.1"
